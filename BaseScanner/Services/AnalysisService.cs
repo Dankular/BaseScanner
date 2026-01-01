@@ -5,6 +5,8 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.FindSymbols;
 using Microsoft.CodeAnalysis.MSBuild;
 using BaseScanner.Analyzers;
+using BaseScanner.Analyzers.Security;
+using BaseScanner.Analysis;
 using System.Collections.Concurrent;
 using System.Text.RegularExpressions;
 
@@ -25,6 +27,8 @@ public record AnalysisOptions
     public bool ArchitectureAnalysis { get; init; }
     public bool SafetyAnalysis { get; init; }
     public bool OptimizationAnalysis { get; init; }
+    public bool SecurityAnalysis { get; init; }
+    public bool DashboardAnalysis { get; init; }
 
     public static AnalysisOptions All => new()
     {
@@ -40,7 +44,9 @@ public record AnalysisOptions
         RefactoringAnalysis = true,
         ArchitectureAnalysis = true,
         SafetyAnalysis = true,
-        OptimizationAnalysis = true
+        OptimizationAnalysis = true,
+        SecurityAnalysis = true,
+        DashboardAnalysis = true
     };
 
     public static AnalysisOptions Parse(string analyses)
@@ -67,7 +73,9 @@ public record AnalysisOptions
             RefactoringAnalysis = parts.Contains("refactor"),
             ArchitectureAnalysis = parts.Contains("arch"),
             SafetyAnalysis = parts.Contains("safety"),
-            OptimizationAnalysis = parts.Contains("optimize") || parts.Contains("optimizations")
+            OptimizationAnalysis = parts.Contains("optimize") || parts.Contains("optimizations"),
+            SecurityAnalysis = parts.Contains("security"),
+            DashboardAnalysis = parts.Contains("dashboard") || parts.Contains("metrics")
         };
     }
 }
@@ -483,6 +491,71 @@ public class AnalysisService
             var analyzer = new OptimizationAnalyzer();
             var optimizations = await analyzer.AnalyzeAsync(project);
             result = result with { Optimizations = optimizations };
+        }
+
+        if (options.SecurityAnalysis)
+        {
+            var analyzer = new SecurityAnalyzer();
+            var securityResult = await analyzer.AnalyzeAsync(project);
+            result = result with
+            {
+                Security = new SecurityAnalysisResult
+                {
+                    TotalVulnerabilities = securityResult.Vulnerabilities.Count,
+                    CriticalCount = securityResult.Summary.CriticalCount,
+                    HighCount = securityResult.Summary.HighCount,
+                    MediumCount = securityResult.Summary.MediumCount,
+                    LowCount = securityResult.Summary.LowCount,
+                    Vulnerabilities = securityResult.Vulnerabilities.Take(100).Select(v => new SecurityIssueItem
+                    {
+                        VulnerabilityType = v.VulnerabilityType,
+                        Severity = v.Severity,
+                        CweId = v.CweId,
+                        FilePath = Path.GetRelativePath(projectDirectory, v.FilePath),
+                        StartLine = v.StartLine,
+                        EndLine = v.EndLine,
+                        Description = v.Description,
+                        Recommendation = v.Recommendation,
+                        VulnerableCode = v.VulnerableCode,
+                        SecureCode = v.SecureCode,
+                        Confidence = v.Confidence
+                    }).ToList(),
+                    VulnerabilitiesByType = securityResult.Summary.VulnerabilitiesByType,
+                    VulnerabilitiesByCwe = securityResult.Summary.VulnerabilitiesByCwe
+                }
+            };
+        }
+
+        if (options.DashboardAnalysis)
+        {
+            var dashboard = new MetricsDashboard();
+            var metrics = await dashboard.GenerateDashboardAsync(project);
+            result = result with
+            {
+                Metrics = new MetricsDashboardResult
+                {
+                    HealthScore = metrics.HealthScore,
+                    TotalFiles = metrics.TotalFiles,
+                    TotalLines = metrics.TotalLines,
+                    TotalMethods = metrics.TotalMethods,
+                    TotalClasses = metrics.TotalClasses,
+                    AverageCyclomaticComplexity = metrics.AverageCyclomaticComplexity,
+                    MaxCyclomaticComplexity = metrics.MaxCyclomaticComplexity,
+                    MethodsAboveComplexityThreshold = metrics.MethodsAboveThreshold,
+                    MaintainabilityIndex = metrics.MaintainabilityIndex,
+                    TechnicalDebtMinutes = metrics.TechnicalDebtMinutes,
+                    Hotspots = metrics.Hotspots.Take(10).Select(h => new HotspotFileItem
+                    {
+                        FilePath = Path.GetRelativePath(projectDirectory, h.FilePath),
+                        IssueCount = h.IssueCount,
+                        CriticalOrHighCount = h.CriticalOrHigh,
+                        Lines = h.Lines,
+                        Methods = h.Methods
+                    }).ToList(),
+                    IssuesByCategory = metrics.IssuesByCategory,
+                    IssuesBySeverity = metrics.IssuesBySeverity
+                }
+            };
         }
 
         // Update summary totals

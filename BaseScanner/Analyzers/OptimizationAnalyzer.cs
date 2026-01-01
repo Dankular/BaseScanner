@@ -23,7 +23,11 @@ public class OptimizationAnalyzer
             new LinqOptimizationDetector(),
             new CollectionOptimizationDetector(),
             new AsyncPatternDetector(),
-            new ModernCSharpDetector()
+            new ModernCSharpDetector(),
+            new StringOptimizationDetector(),
+            new MemoryOptimizationDetector(),
+            new CachingOptimizationDetector(),
+            new LazyInitDetector()
         };
     }
 

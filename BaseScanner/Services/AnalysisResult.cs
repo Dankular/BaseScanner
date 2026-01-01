@@ -50,6 +50,70 @@ public record AnalysisResult
 
     // Optimizations
     public OptimizationResult? Optimizations { get; init; }
+
+    // Security Analysis
+    public SecurityAnalysisResult? Security { get; init; }
+
+    // Metrics Dashboard
+    public MetricsDashboardResult? Metrics { get; init; }
+}
+
+// Security result types
+
+public record SecurityAnalysisResult
+{
+    public int TotalVulnerabilities { get; init; }
+    public int CriticalCount { get; init; }
+    public int HighCount { get; init; }
+    public int MediumCount { get; init; }
+    public int LowCount { get; init; }
+    public List<SecurityIssueItem> Vulnerabilities { get; init; } = [];
+    public Dictionary<string, int> VulnerabilitiesByType { get; init; } = [];
+    public Dictionary<string, int> VulnerabilitiesByCwe { get; init; } = [];
+}
+
+public record SecurityIssueItem
+{
+    public required string VulnerabilityType { get; init; }
+    public required string Severity { get; init; }
+    public required string CweId { get; init; }
+    public required string FilePath { get; init; }
+    public required int StartLine { get; init; }
+    public required int EndLine { get; init; }
+    public required string Description { get; init; }
+    public required string Recommendation { get; init; }
+    public required string VulnerableCode { get; init; }
+    public required string SecureCode { get; init; }
+    public required string Confidence { get; init; }
+    public string CweLink => $"https://cwe.mitre.org/data/definitions/{CweId.Replace("CWE-", "")}.html";
+}
+
+// Metrics dashboard result types
+
+public record MetricsDashboardResult
+{
+    public required int HealthScore { get; init; }
+    public required int TotalFiles { get; init; }
+    public required int TotalLines { get; init; }
+    public required int TotalMethods { get; init; }
+    public required int TotalClasses { get; init; }
+    public required double AverageCyclomaticComplexity { get; init; }
+    public required int MaxCyclomaticComplexity { get; init; }
+    public required int MethodsAboveComplexityThreshold { get; init; }
+    public required double MaintainabilityIndex { get; init; }
+    public required int TechnicalDebtMinutes { get; init; }
+    public List<HotspotFileItem> Hotspots { get; init; } = [];
+    public Dictionary<string, int> IssuesByCategory { get; init; } = [];
+    public Dictionary<string, int> IssuesBySeverity { get; init; } = [];
+}
+
+public record HotspotFileItem
+{
+    public required string FilePath { get; init; }
+    public required int IssueCount { get; init; }
+    public required int CriticalOrHighCount { get; init; }
+    public required int Lines { get; init; }
+    public required int Methods { get; init; }
 }
 
 public record AnalysisSummary

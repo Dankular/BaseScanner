@@ -10,7 +10,10 @@ using ModelContextProtocol.Server;
 using System.Collections.Concurrent;
 using System.Text.RegularExpressions;
 using BaseScanner.Analyzers;
+using BaseScanner.Analyzers.Security;
+using BaseScanner.Analysis;
 using BaseScanner.Services;
+using BaseScanner.Transformers;
 
 namespace BaseScanner;
 
@@ -37,7 +40,7 @@ class Program
             Console.WriteLine("Usage: BaseScanner <project-path> [options]");
             Console.WriteLine("  <project-path>  Path to a .csproj file or directory containing one");
             Console.WriteLine();
-            Console.WriteLine("Options:");
+            Console.WriteLine("Analysis Options:");
             Console.WriteLine("  --deep          Usage counting, deprecated code detection");
             Console.WriteLine("  --sentiment     Code quality, complexity, duplicates");
             Console.WriteLine("  --perf          Async issues, performance anti-patterns");
@@ -50,14 +53,45 @@ class Program
             Console.WriteLine("  --arch          Architecture analysis (API surface, call graph)");
             Console.WriteLine("  --safety        Code safety (null safety, immutability, logging)");
             Console.WriteLine("  --optimize      Optimization opportunities with code suggestions");
+            Console.WriteLine("  --security      Security vulnerability analysis (CWE references)");
+            Console.WriteLine("  --dashboard     Project health metrics dashboard");
+            Console.WriteLine("  --trends        Trend analysis using git history");
             Console.WriteLine("  --all           Run all analyses");
             Console.WriteLine();
+            Console.WriteLine("Transformation Options:");
+            Console.WriteLine("  --apply         Apply optimizations (use with --preview for dry run)");
+            Console.WriteLine("  --preview       Preview transformations without applying");
+            Console.WriteLine("  --category=X    Filter by category: performance, readability, modernization");
+            Console.WriteLine("  --confidence=X  Minimum confidence: high, medium, low (default: high)");
+            Console.WriteLine("  --rollback      Rollback to previous backup");
+            Console.WriteLine("  --list-backups  List available transformation backups");
+            Console.WriteLine();
+            Console.WriteLine("Server Mode:");
             Console.WriteLine("  --mcp           Run as MCP server for Claude Code integration");
             return 1;
         }
 
         var projectPath = args[0];
         var runAll = args.Contains("--all", StringComparer.OrdinalIgnoreCase);
+
+        // Handle transformation commands first
+        if (args.Contains("--rollback", StringComparer.OrdinalIgnoreCase))
+        {
+            return await HandleRollback(projectPath);
+        }
+
+        if (args.Contains("--list-backups", StringComparer.OrdinalIgnoreCase))
+        {
+            return await HandleListBackups(projectPath);
+        }
+
+        if (args.Contains("--apply", StringComparer.OrdinalIgnoreCase) || args.Contains("--preview", StringComparer.OrdinalIgnoreCase))
+        {
+            var isPreview = args.Contains("--preview", StringComparer.OrdinalIgnoreCase);
+            var category = GetArgValue(args, "--category") ?? "all";
+            var confidence = GetArgValue(args, "--confidence") ?? "high";
+            return await HandleTransformations(projectPath, isPreview, category, confidence);
+        }
 
         var options = new CliAnalysisOptions
         {
@@ -72,7 +106,10 @@ class Program
             RefactoringAnalysis = runAll || args.Contains("--refactor", StringComparer.OrdinalIgnoreCase),
             ArchitectureAnalysis = runAll || args.Contains("--arch", StringComparer.OrdinalIgnoreCase),
             SafetyAnalysis = runAll || args.Contains("--safety", StringComparer.OrdinalIgnoreCase),
-            OptimizationAnalysis = runAll || args.Contains("--optimize", StringComparer.OrdinalIgnoreCase)
+            OptimizationAnalysis = runAll || args.Contains("--optimize", StringComparer.OrdinalIgnoreCase),
+            SecurityAnalysis = runAll || args.Contains("--security", StringComparer.OrdinalIgnoreCase),
+            DashboardAnalysis = args.Contains("--dashboard", StringComparer.OrdinalIgnoreCase),
+            TrendAnalysis = args.Contains("--trends", StringComparer.OrdinalIgnoreCase)
         };
 
         // If directory provided, look for .csproj file
@@ -135,6 +172,9 @@ class Program
         public bool ArchitectureAnalysis { get; init; }
         public bool SafetyAnalysis { get; init; }
         public bool OptimizationAnalysis { get; init; }
+        public bool SecurityAnalysis { get; init; }
+        public bool DashboardAnalysis { get; init; }
+        public bool TrendAnalysis { get; init; }
 
         public List<string> GetEnabledModes()
         {
@@ -151,7 +191,219 @@ class Program
             if (ArchitectureAnalysis) modes.Add("arch");
             if (SafetyAnalysis) modes.Add("safety");
             if (OptimizationAnalysis) modes.Add("optimize");
+            if (SecurityAnalysis) modes.Add("security");
+            if (DashboardAnalysis) modes.Add("dashboard");
+            if (TrendAnalysis) modes.Add("trends");
             return modes;
+        }
+    }
+
+    static string? GetArgValue(string[] args, string prefix)
+    {
+        var arg = args.FirstOrDefault(a => a.StartsWith(prefix + "=", StringComparison.OrdinalIgnoreCase));
+        return arg?.Substring(prefix.Length + 1);
+    }
+
+    static async Task<int> HandleRollback(string projectPath)
+    {
+        Console.WriteLine("Rolling back transformations...");
+        try
+        {
+            MSBuildLocator.RegisterDefaults();
+            var service = new TransformationService();
+            var result = await service.RollbackAsync(projectPath, null);
+
+            if (result.Success)
+            {
+                Console.ForegroundColor = ConsoleColor.Green;
+                Console.WriteLine($"Successfully restored {result.FilesRestored} files from backup {result.BackupId}");
+                Console.ResetColor();
+                return 0;
+            }
+            else
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine($"Rollback failed: {result.Message}");
+                Console.ResetColor();
+                return 1;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine($"Error: {ex.Message}");
+            Console.ResetColor();
+            return 1;
+        }
+    }
+
+    static async Task<int> HandleListBackups(string projectPath)
+    {
+        try
+        {
+            var backupService = new BackupService(projectPath);
+            var backups = await backupService.ListBackupsAsync();
+
+            if (backups.Count == 0)
+            {
+                Console.WriteLine("No backups found.");
+                return 0;
+            }
+
+            Console.WriteLine($"Available backups ({backups.Count}):");
+            Console.WriteLine();
+            foreach (var backup in backups.OrderByDescending(b => b.Timestamp))
+            {
+                Console.ForegroundColor = ConsoleColor.Cyan;
+                Console.Write($"  {backup.BackupId}");
+                Console.ResetColor();
+                Console.WriteLine($"  {backup.Timestamp:yyyy-MM-dd HH:mm:ss}  ({backup.FileCount} files)");
+                if (!string.IsNullOrEmpty(backup.Description))
+                {
+                    Console.ForegroundColor = ConsoleColor.DarkGray;
+                    Console.WriteLine($"    {backup.Description}");
+                    Console.ResetColor();
+                }
+            }
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine($"Error: {ex.Message}");
+            Console.ResetColor();
+            return 1;
+        }
+    }
+
+    static async Task<int> HandleTransformations(string projectPath, bool isPreview, string category, string confidence)
+    {
+        try
+        {
+            MSBuildLocator.RegisterDefaults();
+
+            var filter = new TransformationFilter
+            {
+                Categories = category == "all" ? [] : [category],
+                MinConfidence = confidence,
+                MaxTransformations = 100
+            };
+
+            var service = new TransformationService();
+
+            if (isPreview)
+            {
+                Console.WriteLine("Previewing transformations...");
+                Console.WriteLine();
+
+                var preview = await service.PreviewAsync(projectPath, filter);
+
+                if (preview.FilteredCount == 0)
+                {
+                    Console.ForegroundColor = ConsoleColor.Green;
+                    Console.WriteLine("No transformations match the specified criteria.");
+                    Console.ResetColor();
+                    return 0;
+                }
+
+                Console.WriteLine($"Found {preview.TotalOpportunities} opportunities, {preview.FilteredCount} match filter:");
+                Console.WriteLine();
+
+                var grouped = preview.Transformations.GroupBy(t => t.Category);
+                foreach (var group in grouped)
+                {
+                    Console.ForegroundColor = ConsoleColor.Cyan;
+                    Console.WriteLine($"  {group.Key.ToUpperInvariant()} ({group.Count()}):");
+                    Console.ResetColor();
+
+                    foreach (var t in group.Take(10))
+                    {
+                        var confidenceColor = t.Confidence switch
+                        {
+                            "High" => ConsoleColor.Green,
+                            "Medium" => ConsoleColor.Yellow,
+                            _ => ConsoleColor.DarkGray
+                        };
+
+                        Console.ForegroundColor = ConsoleColor.DarkGray;
+                        Console.Write($"    {Path.GetFileName(t.FilePath)}:{t.StartLine} ");
+                        Console.ForegroundColor = confidenceColor;
+                        Console.Write($"[{t.Confidence}] ");
+                        Console.ResetColor();
+                        Console.WriteLine(t.Description);
+
+                        Console.ForegroundColor = ConsoleColor.DarkRed;
+                        Console.WriteLine($"      - {t.CurrentCode.Trim().Replace("\n", " ").Replace("\r", "")}");
+                        Console.ForegroundColor = ConsoleColor.DarkGreen;
+                        Console.WriteLine($"      + {t.SuggestedCode.Trim().Replace("\n", " ").Replace("\r", "")}");
+                        Console.ResetColor();
+                    }
+
+                    if (group.Count() > 10)
+                    {
+                        Console.ForegroundColor = ConsoleColor.DarkGray;
+                        Console.WriteLine($"    ... and {group.Count() - 10} more");
+                        Console.ResetColor();
+                    }
+                }
+
+                Console.WriteLine();
+                Console.WriteLine($"Run with --apply to apply these transformations.");
+                return 0;
+            }
+            else
+            {
+                Console.WriteLine("Applying transformations...");
+                Console.WriteLine();
+
+                var options = new TransformationOptions
+                {
+                    CreateBackup = true,
+                    ValidateAfterTransform = true,
+                    StopOnFirstError = false
+                };
+
+                var result = await service.ApplyAsync(projectPath, filter, options);
+
+                if (result.Success)
+                {
+                    Console.ForegroundColor = ConsoleColor.Green;
+                    Console.WriteLine($"Successfully applied {result.TransformationsApplied} transformations to {result.FilesModified} files.");
+                    Console.ResetColor();
+
+                    if (!string.IsNullOrEmpty(result.BackupId))
+                    {
+                        Console.WriteLine($"Backup created: {result.BackupId}");
+                        Console.WriteLine("Run with --rollback to undo changes.");
+                    }
+                }
+                else
+                {
+                    Console.ForegroundColor = ConsoleColor.Yellow;
+                    Console.WriteLine($"Applied {result.TransformationsApplied} transformations, {result.TransformationsFailed} failed.");
+                    Console.ResetColor();
+
+                    if (result.Errors.Count > 0)
+                    {
+                        Console.ForegroundColor = ConsoleColor.Red;
+                        Console.WriteLine("Errors:");
+                        foreach (var error in result.Errors.Take(10))
+                        {
+                            Console.WriteLine($"  {error}");
+                        }
+                        Console.ResetColor();
+                    }
+                }
+
+                return result.Success ? 0 : 1;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine($"Error: {ex.Message}");
+            Console.ResetColor();
+            return 1;
         }
     }
 
@@ -288,6 +540,27 @@ class Program
         {
             Console.WriteLine();
             await AnalyzeOptimizations(project, projectDirectory);
+        }
+
+        // Security analysis
+        if (options.SecurityAnalysis)
+        {
+            Console.WriteLine();
+            await AnalyzeSecurityVulnerabilities(project, projectDirectory);
+        }
+
+        // Dashboard analysis
+        if (options.DashboardAnalysis)
+        {
+            Console.WriteLine();
+            await ShowDashboard(project, projectDirectory);
+        }
+
+        // Trend analysis
+        if (options.TrendAnalysis)
+        {
+            Console.WriteLine();
+            await AnalyzeTrends(projectDirectory);
         }
     }
 
@@ -1690,6 +1963,256 @@ class Program
             Console.WriteLine($"    Performance:          {result.Summary.PerformanceOptimizations}");
             Console.WriteLine($"    Readability:          {result.Summary.ReadabilityImprovements}");
             Console.WriteLine($"    Modernization:        {result.Summary.ModernizationOpportunities}");
+        }
+    }
+
+    static async Task AnalyzeSecurityVulnerabilities(Project project, string projectDirectory)
+    {
+        Console.ForegroundColor = ConsoleColor.Yellow;
+        Console.WriteLine("=== SECURITY VULNERABILITY ANALYSIS ===");
+        Console.ResetColor();
+        Console.WriteLine();
+
+        var analyzer = new SecurityAnalyzer();
+        var vulnerabilities = await analyzer.AnalyzeAsync(project);
+
+        if (vulnerabilities.Count == 0)
+        {
+            Console.ForegroundColor = ConsoleColor.Green;
+            Console.WriteLine("  No security vulnerabilities found.");
+            Console.ResetColor();
+            return;
+        }
+
+        // Group by severity
+        var critical = vulnerabilities.Where(v => v.Severity == "Critical").ToList();
+        var high = vulnerabilities.Where(v => v.Severity == "High").ToList();
+        var medium = vulnerabilities.Where(v => v.Severity == "Medium").ToList();
+        var low = vulnerabilities.Where(v => v.Severity == "Low").ToList();
+
+        // Summary
+        Console.ForegroundColor = ConsoleColor.Red;
+        if (critical.Count > 0) Console.WriteLine($"  CRITICAL: {critical.Count}");
+        Console.ForegroundColor = ConsoleColor.DarkRed;
+        if (high.Count > 0) Console.WriteLine($"  HIGH: {high.Count}");
+        Console.ForegroundColor = ConsoleColor.Yellow;
+        if (medium.Count > 0) Console.WriteLine($"  MEDIUM: {medium.Count}");
+        Console.ForegroundColor = ConsoleColor.DarkGray;
+        if (low.Count > 0) Console.WriteLine($"  LOW: {low.Count}");
+        Console.ResetColor();
+        Console.WriteLine();
+
+        // Group by type
+        var byType = vulnerabilities.GroupBy(v => v.VulnerabilityType).OrderByDescending(g => g.Max(v => v.Severity == "Critical" ? 4 : v.Severity == "High" ? 3 : v.Severity == "Medium" ? 2 : 1));
+
+        foreach (var group in byType)
+        {
+            var maxSeverity = group.Max(v => v.Severity == "Critical" ? 4 : v.Severity == "High" ? 3 : v.Severity == "Medium" ? 2 : 1);
+            Console.ForegroundColor = maxSeverity >= 4 ? ConsoleColor.Red : maxSeverity >= 3 ? ConsoleColor.DarkRed : maxSeverity >= 2 ? ConsoleColor.Yellow : ConsoleColor.DarkGray;
+            Console.WriteLine($"  {group.Key} ({group.Count()}):");
+            Console.ResetColor();
+
+            foreach (var vuln in group.Take(5))
+            {
+                var relativePath = Path.GetRelativePath(projectDirectory, vuln.FilePath);
+                Console.ForegroundColor = ConsoleColor.DarkGray;
+                Console.Write($"    {relativePath}:{vuln.StartLine} ");
+                Console.ResetColor();
+
+                Console.ForegroundColor = vuln.Severity == "Critical" ? ConsoleColor.Red : vuln.Severity == "High" ? ConsoleColor.DarkRed : ConsoleColor.Yellow;
+                Console.Write($"[{vuln.Severity}] ");
+                Console.ResetColor();
+
+                Console.ForegroundColor = ConsoleColor.Cyan;
+                Console.Write($"{vuln.CweId} ");
+                Console.ResetColor();
+                Console.WriteLine(vuln.Description);
+
+                Console.ForegroundColor = ConsoleColor.DarkGreen;
+                Console.WriteLine($"      Fix: {vuln.Recommendation}");
+                Console.ResetColor();
+            }
+
+            if (group.Count() > 5)
+            {
+                Console.ForegroundColor = ConsoleColor.DarkGray;
+                Console.WriteLine($"    ... and {group.Count() - 5} more");
+                Console.ResetColor();
+            }
+            Console.WriteLine();
+        }
+
+        Console.WriteLine($"  Total vulnerabilities: {vulnerabilities.Count}");
+    }
+
+    static async Task ShowDashboard(Project project, string projectDirectory)
+    {
+        Console.ForegroundColor = ConsoleColor.Yellow;
+        Console.WriteLine("=== PROJECT HEALTH DASHBOARD ===");
+        Console.ResetColor();
+        Console.WriteLine();
+
+        var dashboard = new MetricsDashboard();
+        var metrics = await dashboard.CalculateMetricsAsync(project);
+
+        // Health Score
+        var healthColor = metrics.HealthScore >= 80 ? ConsoleColor.Green : metrics.HealthScore >= 60 ? ConsoleColor.Yellow : ConsoleColor.Red;
+        Console.Write("  Health Score: ");
+        Console.ForegroundColor = healthColor;
+        Console.WriteLine($"{metrics.HealthScore}/100");
+        Console.ResetColor();
+        Console.WriteLine();
+
+        // Size Metrics
+        Console.ForegroundColor = ConsoleColor.Cyan;
+        Console.WriteLine("  CODE SIZE:");
+        Console.ResetColor();
+        Console.WriteLine($"    Files:            {metrics.TotalFiles}");
+        Console.WriteLine($"    Lines of Code:    {metrics.TotalLines:N0}");
+        Console.WriteLine($"    Classes:          {metrics.TotalClasses}");
+        Console.WriteLine($"    Methods:          {metrics.TotalMethods}");
+        Console.WriteLine();
+
+        // Complexity
+        Console.ForegroundColor = ConsoleColor.Cyan;
+        Console.WriteLine("  COMPLEXITY:");
+        Console.ResetColor();
+        var complexityColor = metrics.AverageCyclomaticComplexity <= 5 ? ConsoleColor.Green : metrics.AverageCyclomaticComplexity <= 10 ? ConsoleColor.Yellow : ConsoleColor.Red;
+        Console.Write($"    Avg Cyclomatic:   ");
+        Console.ForegroundColor = complexityColor;
+        Console.WriteLine($"{metrics.AverageCyclomaticComplexity:F1}");
+        Console.ResetColor();
+
+        Console.Write($"    Max Cyclomatic:   ");
+        Console.ForegroundColor = metrics.MaxCyclomaticComplexity > 20 ? ConsoleColor.Red : ConsoleColor.Yellow;
+        Console.WriteLine($"{metrics.MaxCyclomaticComplexity}");
+        Console.ResetColor();
+
+        Console.WriteLine($"    Methods > 10 CC:  {metrics.MethodsAboveThreshold}");
+        Console.WriteLine();
+
+        // Maintainability
+        Console.ForegroundColor = ConsoleColor.Cyan;
+        Console.WriteLine("  MAINTAINABILITY:");
+        Console.ResetColor();
+        var maintColor = metrics.MaintainabilityIndex >= 70 ? ConsoleColor.Green : metrics.MaintainabilityIndex >= 40 ? ConsoleColor.Yellow : ConsoleColor.Red;
+        Console.Write($"    Index:            ");
+        Console.ForegroundColor = maintColor;
+        Console.WriteLine($"{metrics.MaintainabilityIndex:F1}");
+        Console.ResetColor();
+
+        var debtHours = metrics.TechnicalDebtMinutes / 60.0;
+        var debtDays = debtHours / 8.0;
+        Console.Write($"    Technical Debt:   ");
+        Console.ForegroundColor = debtDays > 5 ? ConsoleColor.Red : debtDays > 1 ? ConsoleColor.Yellow : ConsoleColor.Green;
+        Console.WriteLine($"{debtHours:F1} hours ({debtDays:F1} days)");
+        Console.ResetColor();
+        Console.WriteLine();
+
+        // Security Summary
+        if (metrics.SecurityVulnerabilities > 0)
+        {
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            Console.WriteLine("  SECURITY:");
+            Console.ResetColor();
+
+            Console.Write($"    Vulnerabilities:  ");
+            Console.ForegroundColor = metrics.CriticalSecurityIssues > 0 ? ConsoleColor.Red : ConsoleColor.Yellow;
+            Console.WriteLine($"{metrics.SecurityVulnerabilities} ({metrics.CriticalSecurityIssues} critical, {metrics.HighSecurityIssues} high)");
+            Console.ResetColor();
+            Console.WriteLine();
+        }
+
+        Console.WriteLine("  Run with --security for detailed vulnerability report.");
+    }
+
+    static async Task AnalyzeTrends(string projectDirectory)
+    {
+        Console.ForegroundColor = ConsoleColor.Yellow;
+        Console.WriteLine("=== TREND ANALYSIS ===");
+        Console.ResetColor();
+        Console.WriteLine();
+
+        var analyzer = new TrendAnalyzer(projectDirectory);
+        var gitTrends = await analyzer.AnalyzeGitTrendsAsync(20);
+
+        if (gitTrends.AnalyzedCommits == 0)
+        {
+            Console.ForegroundColor = ConsoleColor.DarkGray;
+            Console.WriteLine("  Git repository not found or no commits available.");
+            Console.ResetColor();
+            return;
+        }
+
+        Console.WriteLine($"  Analyzed {gitTrends.AnalyzedCommits} recent commits");
+        Console.WriteLine();
+
+        // Change stats
+        Console.ForegroundColor = ConsoleColor.Cyan;
+        Console.WriteLine("  CHANGE STATISTICS:");
+        Console.ResetColor();
+        Console.WriteLine($"    Files Changed:    {gitTrends.TotalFilesChanged}");
+        Console.ForegroundColor = ConsoleColor.Green;
+        Console.WriteLine($"    Lines Added:      +{gitTrends.TotalAdditions}");
+        Console.ForegroundColor = ConsoleColor.Red;
+        Console.WriteLine($"    Lines Deleted:    -{gitTrends.TotalDeletions}");
+        Console.ResetColor();
+        Console.WriteLine();
+
+        // Hotspots
+        if (gitTrends.Hotspots.Count > 0)
+        {
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            Console.WriteLine("  CHANGE HOTSPOTS:");
+            Console.ResetColor();
+
+            foreach (var hotspot in gitTrends.Hotspots.Take(10))
+            {
+                var relativePath = Path.GetRelativePath(projectDirectory, hotspot.FilePath);
+                Console.ForegroundColor = hotspot.ChangeCount > 5 ? ConsoleColor.Red : ConsoleColor.Yellow;
+                Console.Write($"    {hotspot.ChangeCount,3}x  ");
+                Console.ResetColor();
+                Console.WriteLine(relativePath);
+            }
+            Console.WriteLine();
+        }
+
+        // Author contributions
+        if (gitTrends.AuthorContributions.Count > 0)
+        {
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            Console.WriteLine("  CONTRIBUTOR ACTIVITY:");
+            Console.ResetColor();
+
+            foreach (var (author, count) in gitTrends.AuthorContributions.OrderByDescending(kv => kv.Value).Take(5))
+            {
+                Console.WriteLine($"    {author}: {count} commits");
+            }
+            Console.WriteLine();
+        }
+
+        // Check for regressions
+        var regressions = await analyzer.DetectRegressionsAsync();
+        if (regressions.Count > 0)
+        {
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine("  DETECTED REGRESSIONS:");
+            Console.ResetColor();
+
+            foreach (var regression in regressions)
+            {
+                Console.ForegroundColor = regression.Severity == "Critical" ? ConsoleColor.Red : ConsoleColor.Yellow;
+                Console.Write($"    [{regression.Severity}] ");
+                Console.ResetColor();
+                Console.WriteLine(regression.Message);
+            }
+            Console.WriteLine();
+        }
+        else
+        {
+            Console.ForegroundColor = ConsoleColor.Green;
+            Console.WriteLine("  No regressions detected in recent history.");
+            Console.ResetColor();
         }
     }
 

@@ -36,6 +36,16 @@ A powerful C# code analysis tool that provides deep insights into code quality, 
 | `--rollback` | Rollback to previous backup |
 | `--list-backups` | List available transformation backups |
 
+### Refactoring Optimizer
+
+| Flag | Description |
+|------|-------------|
+| `--refactor-analyze` | Analyze refactoring opportunities with LCOM4 metrics |
+| `--refactor-preview` | Compare multiple strategies using virtual workspace |
+| `--refactor-apply` | Apply best refactoring strategy with backup |
+| `--refactor-chain` | Apply a chain of strategies (godclass, longmethod, testability) |
+| `--severity=X` | Filter by severity: critical, high, medium, low |
+
 ### Framework-Aware Analysis
 
 BaseScanner intelligently detects your project's target framework and C# language version:
@@ -87,6 +97,12 @@ dotnet run -- "path/to/project" --apply --category=performance
 
 # Rollback changes
 dotnet run -- "path/to/project" --rollback
+
+# Refactoring optimizer
+dotnet run -- "path/to/project" --refactor-analyze --severity=critical
+dotnet run -- "path/to/project" --refactor-preview --file=MyClass.cs --target=MyClass
+dotnet run -- "path/to/project" --refactor-apply --file=MyClass.cs --target=MyClass
+dotnet run -- "path/to/project" --refactor-chain --file=MyClass.cs --target=MyClass --chain=godclass
 ```
 
 ### MCP Server Mode (Claude Code Integration)
@@ -112,6 +128,13 @@ Available MCP tools:
 | `ListTransformationBackups` | List available backups |
 | `AnalyzeTaintFlow` | Track tainted data from sources to sinks |
 | `AnalyzeTrends` | Analyze trends over git history |
+| `AnalyzeRefactoringOpportunities` | Find god classes and code smells with LCOM4 |
+| `PreviewRefactoring` | Compare refactoring strategies in virtual workspace |
+| `ApplyRefactoring` | Apply best strategy with automatic backup |
+| `ApplyRefactoringChain` | Apply a sequence of strategies for comprehensive remediation |
+| `AnalyzeCohesion` | Analyze class cohesion and method clusters |
+| `GetRefactoringChains` | Get pre-built strategy chains for common smells |
+| `ListRefactoringStrategies` | List available refactoring strategies |
 
 ## Analysis Details
 
@@ -177,6 +200,41 @@ Identifies:
 - **Feature Envy**: Methods that use other classes more than their own
 - **Parameter Smells**: Long parameter lists, primitive obsession
 
+### Refactoring Optimizer
+
+A comprehensive refactoring system that uses an in-memory virtual workspace to safely compare and apply refactorings without breaking functionality.
+
+**Strategies:**
+
+| Strategy | Description |
+|----------|-------------|
+| `SimplifyMethod` | Guard clauses, early returns, flatten nesting |
+| `ExtractMethod` | Extract cohesive code blocks into methods |
+| `ExtractClass` | Extract method clusters to new classes |
+| `SplitGodClass` | Split by responsibility boundaries |
+| `ExtractInterface` | Create interfaces from public members |
+| `ReplaceConditional` | Replace switch-on-type with polymorphism |
+
+**Strategy Chains:**
+
+Pre-built chains for comprehensive remediation:
+
+```
+GodClass Chain:     SimplifyMethod → ExtractMethod → SplitGodClass → ExtractInterface
+LongMethod Chain:   SimplifyMethod → ExtractMethod
+Testability Chain:  ExtractInterface → ExtractClass → ReplaceConditional
+Complexity Chain:   SimplifyMethod → ReplaceConditional → ExtractMethod
+```
+
+**Scoring Metrics:**
+
+| Metric | Weight | Description |
+|--------|--------|-------------|
+| Cohesion | 40% | LCOM4 improvement |
+| Complexity | 30% | Cyclomatic complexity reduction |
+| Maintainability | 20% | Code maintainability improvement |
+| Naming | 10% | Naming quality of generated code |
+
 ### Architecture Analysis
 
 - Public API surface analysis
@@ -236,6 +294,11 @@ BaseScanner/
 ├── Analyzers/
 │   ├── ArchitectureAnalyzer.cs
 │   ├── OptimizationAnalyzer.cs
+│   ├── Concurrency/
+│   │   └── ConcurrencyAnalyzer.cs
+│   ├── Frameworks/
+│   │   ├── AspNetCoreAnalyzer.cs
+│   │   └── EntityFrameworkAnalyzer.cs
 │   ├── Optimizations/
 │   │   ├── AsyncPatternDetector.cs
 │   │   ├── CachingOptimizationDetector.cs
@@ -245,6 +308,8 @@ BaseScanner/
 │   │   ├── MemoryOptimizationDetector.cs
 │   │   ├── ModernCSharpDetector.cs
 │   │   └── StringOptimizationDetector.cs
+│   ├── Quality/
+│   │   └── CodeQualityAnalyzer.cs
 │   └── Security/
 │       ├── AuthenticationDetector.cs
 │       ├── CryptoAnalyzer.cs
@@ -262,6 +327,24 @@ BaseScanner/
 ├── Context/
 │   ├── CodeContext.cs
 │   └── ContextCache.cs
+├── Refactoring/
+│   ├── RefactoringOrchestrator.cs
+│   ├── Analysis/
+│   │   └── CohesionAnalyzer.cs
+│   ├── Composition/
+│   │   └── StrategyComposer.cs
+│   ├── Models/
+│   │   └── RefactoringModels.cs
+│   ├── Scoring/
+│   │   └── RefactoringScorer.cs
+│   └── Strategies/
+│       ├── IRefactoringStrategy.cs
+│       ├── ExtractClassStrategy.cs
+│       ├── ExtractInterfaceStrategy.cs
+│       ├── ExtractMethodStrategy.cs
+│       ├── ReplaceConditionalStrategy.cs
+│       ├── SimplifyMethodStrategy.cs
+│       └── SplitGodClassStrategy.cs
 ├── Services/
 │   ├── AnalysisService.cs
 │   ├── AnalysisResult.cs
@@ -274,8 +357,15 @@ BaseScanner/
 │       ├── LinqTransformer.cs
 │       ├── ModernCSharpTransformer.cs
 │       └── StringTransformer.cs
+├── VirtualWorkspace/
+│   ├── VirtualWorkspaceManager.cs
+│   ├── SolutionBranchManager.cs
+│   ├── TransformationScorer.cs
+│   ├── DiffEngine.cs
+│   └── Models.cs
 ├── Tools/
-│   └── AnalyzerTools.cs
+│   ├── AnalyzerTools.cs
+│   └── RefactoringTools.cs
 └── Program.cs
 ```
 

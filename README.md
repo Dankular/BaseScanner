@@ -204,6 +204,31 @@ Identifies:
 
 A comprehensive refactoring system that uses an in-memory virtual workspace to safely compare and apply refactorings without breaking functionality.
 
+**Virtual Workspace:**
+
+The Virtual Workspace enables safe, non-destructive refactoring by:
+
+- **In-Memory Branches**: Each refactoring strategy runs in an isolated in-memory branch, leaving your files untouched until you approve
+- **Parallel Comparison**: Multiple strategies execute simultaneously, allowing side-by-side comparison of different approaches
+- **Semantic Validation**: Each transformation is validated for compilation and public API preservation before scoring
+- **Diff Generation**: Unified diffs show exactly what changes each strategy would make
+- **Rollback Safety**: Automatic backups are created before any file modifications
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Virtual Workspace                         │
+├─────────────────────────────────────────────────────────────┤
+│  Original Solution                                           │
+│       │                                                      │
+│       ├──► Branch: ExtractMethod ──► Score: 72 ──► Diff     │
+│       ├──► Branch: ExtractClass  ──► Score: 85 ──► Diff     │
+│       ├──► Branch: SplitGodClass ──► Score: 91 ──► Diff  ◄──┤ Best
+│       └──► Branch: ExtractInterface ──► Score: 68 ──► Diff  │
+│                                                              │
+│  Compare → Select Best → Apply to Disk (with backup)        │
+└─────────────────────────────────────────────────────────────┘
+```
+
 **Strategies:**
 
 | Strategy | Description |

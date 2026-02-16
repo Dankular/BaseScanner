@@ -8,11 +8,15 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using ModelContextProtocol.Server;
 using System.Collections.Concurrent;
+using System.IO;
 using System.Text.RegularExpressions;
 using BaseScanner.Analyzers;
 using BaseScanner.Analyzers.Security;
 using BaseScanner.Analysis;
+using BaseScanner.Analysis.Models;
 using BaseScanner.Services;
+using BaseScanner.Server;
+using BaseScanner.Server.Models;
 using BaseScanner.Transformers;
 using BaseScanner.Transformers.Core;
 
@@ -33,6 +37,13 @@ class Program
                 .WithToolsFromAssembly();
             await builder.Build().RunAsync();
             return 0;
+        }
+
+        // LSP Server mode
+        if (args.Contains("--lsp", StringComparer.OrdinalIgnoreCase) ||
+            args.Any(a => a.StartsWith("--lsp-port=", StringComparison.OrdinalIgnoreCase)))
+        {
+            return await RunLspServerAsync(args);
         }
 
         // CLI mode
@@ -59,6 +70,31 @@ class Program
             Console.WriteLine("  --trends        Trend analysis using git history");
             Console.WriteLine("  --all           Run all analyses");
             Console.WriteLine();
+            Console.WriteLine("New Analyzers:");
+            Console.WriteLine("  --vulnerabilities  Dependency vulnerability scanning (CVE/GHSA)");
+            Console.WriteLine("  --memory           Memory leak detection (event handlers, closures)");
+            Console.WriteLine("  --logging          Logging quality (sensitive data, levels)");
+            Console.WriteLine("  --config           Configuration analysis (hardcoded values)");
+            Console.WriteLine("  --naming           Naming convention analysis");
+            Console.WriteLine("  --debt             Technical debt scoring and prioritization");
+            Console.WriteLine("  --thread-safety    Thread safety and race condition detection");
+            Console.WriteLine("  --docs             Documentation quality analysis");
+            Console.WriteLine("  --clones           Semantic code clone detection");
+            Console.WriteLine("  --impact=<symbol>  Change impact analysis for symbol");
+            Console.WriteLine("  --test-coverage    Test coverage analysis and test smell detection");
+            Console.WriteLine("  --migration        .NET migration assistance and API mapping");
+            Console.WriteLine("  --contracts        Contract/invariant analysis (pre/post conditions)");
+            Console.WriteLine("  --api-design       API design consistency and breaking changes");
+            Console.WriteLine();
+            Console.WriteLine("Comprehensive Analysis:");
+            Console.WriteLine("  --comprehensive    Run ALL analyzers with detailed output");
+            Console.WriteLine("  --verbose          Show more details (20 items per category vs 5)");
+            Console.WriteLine("  --top=<N>          Show top N items per category (default: 5)");
+            Console.WriteLine("  --focus=<cat>      Focus on: security,memory,perf,quality,all");
+            Console.WriteLine("  --group-by-file    Group issues by file for hotspot analysis");
+            Console.WriteLine("  --report=<format>  Output format: console, json, sarif, html (default: console)");
+            Console.WriteLine("  --output=<path>    Output file path for report");
+            Console.WriteLine();
             Console.WriteLine("Transformation Options:");
             Console.WriteLine("  --apply         Apply optimizations (use with --preview for dry run)");
             Console.WriteLine("  --preview       Preview transformations without applying");
@@ -79,13 +115,33 @@ class Program
             Console.WriteLine("                            ReplaceConditional");
             Console.WriteLine("  --chain-type=X            Chain type: godclass, longmethod, testability, complexity");
             Console.WriteLine();
+            Console.WriteLine();
+            Console.WriteLine("Incremental Analysis Options:");
+            Console.WriteLine("  --incremental   Use incremental analysis (default when cache exists)");
+            Console.WriteLine("  --no-cache      Force full analysis, ignore cache");
+            Console.WriteLine("  --clear-cache   Clear analysis cache before running");
+            Console.WriteLine("  --cache-stats   Show cache statistics");
             Console.WriteLine("Server Mode:");
             Console.WriteLine("  --mcp           Run as MCP server for Claude Code integration");
+            Console.WriteLine("  --lsp           Run as LSP server (stdio mode)");
+            Console.WriteLine("  --lsp-port=X    Run as LSP server on TCP port X");
             return 1;
         }
 
         var projectPath = args[0];
         var runAll = args.Contains("--all", StringComparer.OrdinalIgnoreCase);
+
+        // Handle cache stats command
+        if (args.Contains("--cache-stats", StringComparer.OrdinalIgnoreCase))
+        {
+            return await HandleCacheStats(projectPath);
+        }
+
+        // Handle clear cache command (when used alone)
+        if (args.Contains("--clear-cache", StringComparer.OrdinalIgnoreCase) && args.Length == 2)
+        {
+            return await HandleClearCache(projectPath);
+        }
 
         // Handle transformation commands first
         if (args.Contains("--rollback", StringComparer.OrdinalIgnoreCase))
@@ -151,51 +207,108 @@ class Program
             return await HandleRefactorChain(projectPath, file, target, chainType);
         }
 
+        var runComprehensive = args.Contains("--comprehensive", StringComparer.OrdinalIgnoreCase);
+        var runAllAnalyzers = runAll || runComprehensive;
+        var reportFormat = GetArgValue(args, "--report") ?? "console";
+        var outputPath = GetArgValue(args, "--output");
+
         var options = new CliAnalysisOptions
         {
-            DeepAnalysis = runAll || args.Contains("--deep", StringComparer.OrdinalIgnoreCase),
-            SentimentAnalysis = runAll || args.Contains("--sentiment", StringComparer.OrdinalIgnoreCase),
-            PerformanceAnalysis = runAll || args.Contains("--perf", StringComparer.OrdinalIgnoreCase),
-            ExceptionAnalysis = runAll || args.Contains("--exceptions", StringComparer.OrdinalIgnoreCase),
-            ResourceAnalysis = runAll || args.Contains("--resources", StringComparer.OrdinalIgnoreCase),
-            DependencyAnalysis = runAll || args.Contains("--deps", StringComparer.OrdinalIgnoreCase),
-            MagicValueAnalysis = runAll || args.Contains("--magic", StringComparer.OrdinalIgnoreCase),
-            GitAnalysis = runAll || args.Contains("--git", StringComparer.OrdinalIgnoreCase),
-            RefactoringAnalysis = runAll || args.Contains("--refactor", StringComparer.OrdinalIgnoreCase),
-            ArchitectureAnalysis = runAll || args.Contains("--arch", StringComparer.OrdinalIgnoreCase),
-            SafetyAnalysis = runAll || args.Contains("--safety", StringComparer.OrdinalIgnoreCase),
-            OptimizationAnalysis = runAll || args.Contains("--optimize", StringComparer.OrdinalIgnoreCase),
-            SecurityAnalysis = runAll || args.Contains("--security", StringComparer.OrdinalIgnoreCase),
-            DashboardAnalysis = args.Contains("--dashboard", StringComparer.OrdinalIgnoreCase),
-            TrendAnalysis = args.Contains("--trends", StringComparer.OrdinalIgnoreCase)
+            DeepAnalysis = runAllAnalyzers || args.Contains("--deep", StringComparer.OrdinalIgnoreCase),
+            SentimentAnalysis = runAllAnalyzers || args.Contains("--sentiment", StringComparer.OrdinalIgnoreCase),
+            PerformanceAnalysis = runAllAnalyzers || args.Contains("--perf", StringComparer.OrdinalIgnoreCase),
+            ExceptionAnalysis = runAllAnalyzers || args.Contains("--exceptions", StringComparer.OrdinalIgnoreCase),
+            ResourceAnalysis = runAllAnalyzers || args.Contains("--resources", StringComparer.OrdinalIgnoreCase),
+            DependencyAnalysis = runAllAnalyzers || args.Contains("--deps", StringComparer.OrdinalIgnoreCase),
+            MagicValueAnalysis = runAllAnalyzers || args.Contains("--magic", StringComparer.OrdinalIgnoreCase),
+            GitAnalysis = runAllAnalyzers || args.Contains("--git", StringComparer.OrdinalIgnoreCase),
+            RefactoringAnalysis = runAllAnalyzers || args.Contains("--refactor", StringComparer.OrdinalIgnoreCase),
+            ArchitectureAnalysis = runAllAnalyzers || args.Contains("--arch", StringComparer.OrdinalIgnoreCase),
+            SafetyAnalysis = runAllAnalyzers || args.Contains("--safety", StringComparer.OrdinalIgnoreCase),
+            OptimizationAnalysis = runAllAnalyzers || args.Contains("--optimize", StringComparer.OrdinalIgnoreCase),
+            SecurityAnalysis = runAllAnalyzers || args.Contains("--security", StringComparer.OrdinalIgnoreCase),
+            DashboardAnalysis = runComprehensive || args.Contains("--dashboard", StringComparer.OrdinalIgnoreCase),
+            TrendAnalysis = runComprehensive || args.Contains("--trends", StringComparer.OrdinalIgnoreCase),
+            UseIncremental = args.Contains("--incremental", StringComparer.OrdinalIgnoreCase) || !args.Contains("--no-cache", StringComparer.OrdinalIgnoreCase),
+            NoCache = args.Contains("--no-cache", StringComparer.OrdinalIgnoreCase),
+            ClearCache = args.Contains("--clear-cache", StringComparer.OrdinalIgnoreCase),
+            // New Analyzers (Phase 1-4)
+            VulnerabilityAnalysis = runAllAnalyzers || args.Contains("--vulnerabilities", StringComparer.OrdinalIgnoreCase),
+            MemoryLeakAnalysis = runAllAnalyzers || args.Contains("--memory", StringComparer.OrdinalIgnoreCase),
+            LoggingAnalysis = runAllAnalyzers || args.Contains("--logging", StringComparer.OrdinalIgnoreCase),
+            ConfigurationAnalysis = runAllAnalyzers || args.Contains("--config", StringComparer.OrdinalIgnoreCase),
+            NamingAnalysis = runAllAnalyzers || args.Contains("--naming", StringComparer.OrdinalIgnoreCase),
+            TechnicalDebtAnalysis = runAllAnalyzers || args.Contains("--debt", StringComparer.OrdinalIgnoreCase),
+            ThreadSafetyAnalysis = runAllAnalyzers || args.Contains("--thread-safety", StringComparer.OrdinalIgnoreCase),
+            DocumentationAnalysis = runAllAnalyzers || args.Contains("--docs", StringComparer.OrdinalIgnoreCase),
+            CloneAnalysis = runAllAnalyzers || args.Contains("--clones", StringComparer.OrdinalIgnoreCase),
+            TestCoverageAnalysis = runAllAnalyzers || args.Contains("--test-coverage", StringComparer.OrdinalIgnoreCase),
+            MigrationAnalysis = runAllAnalyzers || args.Contains("--migration", StringComparer.OrdinalIgnoreCase),
+            ContractAnalysis = runAllAnalyzers || args.Contains("--contracts", StringComparer.OrdinalIgnoreCase),
+            ApiDesignAnalysis = runAllAnalyzers || args.Contains("--api-design", StringComparer.OrdinalIgnoreCase),
+            ImpactAnalysis = args.Any(a => a.StartsWith("--impact=", StringComparison.OrdinalIgnoreCase)),
+            ImpactSymbol = GetArgValue(args, "--impact"),
+            // Comprehensive mode settings
+            ComprehensiveMode = runComprehensive,
+            ReportFormat = reportFormat,
+            OutputPath = outputPath,
+            // Display options
+            VerboseOutput = args.Contains("--verbose", StringComparer.OrdinalIgnoreCase),
+            TopN = int.TryParse(GetArgValue(args, "--top"), out var topN) ? topN : (args.Contains("--verbose", StringComparer.OrdinalIgnoreCase) ? 20 : 5),
+            FocusCategory = GetArgValue(args, "--focus") ?? "all",
+            GroupByFile = args.Contains("--group-by-file", StringComparer.OrdinalIgnoreCase)
         };
 
-        // If directory provided, look for .csproj file
+        // If directory provided, look for .csproj or .sln file
         if (Directory.Exists(projectPath))
         {
+            // First check for .sln files
+            var slnFiles = Directory.GetFiles(projectPath, "*.sln");
             var csprojFiles = Directory.GetFiles(projectPath, "*.csproj");
-            if (csprojFiles.Length == 0)
+            
+            if (slnFiles.Length == 0 && csprojFiles.Length == 0)
             {
-                Console.WriteLine($"No .csproj file found in: {projectPath}");
+                Console.WriteLine($"No .csproj or .sln file found in: {projectPath}");
                 return 1;
             }
-            if (csprojFiles.Length > 1)
+            
+            if (slnFiles.Length > 1)
+            {
+                Console.WriteLine($"Multiple .sln files found. Please specify one:");
+                foreach (var file in slnFiles)
+                    Console.WriteLine($"  {file}");
+                return 1;
+            }
+            
+            // Prefer .sln if only one exists
+            if (slnFiles.Length == 1)
+            {
+                projectPath = slnFiles[0];
+            }
+            else if (csprojFiles.Length > 1)
             {
                 Console.WriteLine($"Multiple .csproj files found. Please specify one:");
                 foreach (var file in csprojFiles)
                     Console.WriteLine($"  {file}");
                 return 1;
             }
-            projectPath = csprojFiles[0];
+            else
+            {
+                projectPath = csprojFiles[0];
+            }
         }
 
-        if (!File.Exists(projectPath))
+        // Check if it's a solution file
+        bool isSolution = File.Exists(projectPath) && projectPath.EndsWith(".sln", StringComparison.OrdinalIgnoreCase);
+        
+        if (!File.Exists(projectPath) && !isSolution)
         {
             Console.WriteLine($"Project file not found: {projectPath}");
             return 1;
         }
 
-        Console.WriteLine($"Analyzing project: {projectPath}");
+        var targetType = isSolution ? "solution" : "project";
+        Console.WriteLine($"Analyzing {targetType}: {projectPath}");
         var modes = options.GetEnabledModes();
         if (modes.Count > 0)
             Console.WriteLine($"Analysis modes: {string.Join(", ", modes)}");
@@ -203,8 +316,16 @@ class Program
 
         try
         {
-            MSBuildLocator.RegisterDefaults();
-            await AnalyzeProject(projectPath, options);
+            AnalysisService.EnsureMSBuildRegistered();
+            
+            if (isSolution)
+            {
+                await AnalyzeSolution(projectPath, options);
+            }
+            else
+            {
+                await AnalyzeProject(projectPath, options);
+            }
         }
         catch (Exception ex)
         {
@@ -218,6 +339,7 @@ class Program
 
     record CliAnalysisOptions
     {
+        // Core analyzers
         public bool DeepAnalysis { get; init; }
         public bool SentimentAnalysis { get; init; }
         public bool PerformanceAnalysis { get; init; }
@@ -233,10 +355,42 @@ class Program
         public bool SecurityAnalysis { get; init; }
         public bool DashboardAnalysis { get; init; }
         public bool TrendAnalysis { get; init; }
+        public bool UseIncremental { get; init; }
+        public bool NoCache { get; init; }
+        public bool ClearCache { get; init; }
+
+        // New Analyzers (Phase 1-4)
+        public bool VulnerabilityAnalysis { get; init; }
+        public bool MemoryLeakAnalysis { get; init; }
+        public bool LoggingAnalysis { get; init; }
+        public bool ConfigurationAnalysis { get; init; }
+        public bool NamingAnalysis { get; init; }
+        public bool TechnicalDebtAnalysis { get; init; }
+        public bool ThreadSafetyAnalysis { get; init; }
+        public bool DocumentationAnalysis { get; init; }
+        public bool CloneAnalysis { get; init; }
+        public bool TestCoverageAnalysis { get; init; }
+        public bool MigrationAnalysis { get; init; }
+        public bool ContractAnalysis { get; init; }
+        public bool ApiDesignAnalysis { get; init; }
+        public bool ImpactAnalysis { get; init; }
+        public string? ImpactSymbol { get; init; }
+
+        // Comprehensive mode settings
+        public bool ComprehensiveMode { get; init; }
+        public string ReportFormat { get; init; } = "console";
+        public string? OutputPath { get; init; }
+
+        // Display options
+        public bool VerboseOutput { get; init; }
+        public int TopN { get; init; } = 5;
+        public string FocusCategory { get; init; } = "all";
+        public bool GroupByFile { get; init; }
 
         public List<string> GetEnabledModes()
         {
             var modes = new List<string>();
+            if (ComprehensiveMode) modes.Add("COMPREHENSIVE");
             if (DeepAnalysis) modes.Add("deep");
             if (SentimentAnalysis) modes.Add("sentiment");
             if (PerformanceAnalysis) modes.Add("perf");
@@ -251,8 +405,126 @@ class Program
             if (OptimizationAnalysis) modes.Add("optimize");
             if (SecurityAnalysis) modes.Add("security");
             if (DashboardAnalysis) modes.Add("dashboard");
-            if (TrendAnalysis) modes.Add("trends");
+            // New analyzers
+            if (VulnerabilityAnalysis) modes.Add("vulnerabilities");
+            if (MemoryLeakAnalysis) modes.Add("memory");
+            if (LoggingAnalysis) modes.Add("logging");
+            if (ConfigurationAnalysis) modes.Add("config");
+            if (NamingAnalysis) modes.Add("naming");
+            if (TechnicalDebtAnalysis) modes.Add("debt");
+            if (ThreadSafetyAnalysis) modes.Add("thread-safety");
+            if (DocumentationAnalysis) modes.Add("docs");
+            if (CloneAnalysis) modes.Add("clones");
+            if (TestCoverageAnalysis) modes.Add("test-coverage");
+            if (MigrationAnalysis) modes.Add("migration");
+            if (ContractAnalysis) modes.Add("contracts");
+            if (ApiDesignAnalysis) modes.Add("api-design");
+            if (ImpactAnalysis) modes.Add($"impact={ImpactSymbol}");
             return modes;
+        }
+
+        public int GetTotalAnalyzerCount()
+        {
+            int count = 0;
+            if (DeepAnalysis) count++;
+            if (SentimentAnalysis) count++;
+            if (PerformanceAnalysis) count++;
+            if (ExceptionAnalysis) count++;
+            if (ResourceAnalysis) count++;
+            if (DependencyAnalysis) count++;
+            if (MagicValueAnalysis) count++;
+            if (GitAnalysis) count++;
+            if (RefactoringAnalysis) count++;
+            if (ArchitectureAnalysis) count++;
+            if (SafetyAnalysis) count++;
+            if (OptimizationAnalysis) count++;
+            if (SecurityAnalysis) count++;
+            if (DashboardAnalysis) count++;
+            if (VulnerabilityAnalysis) count++;
+            if (MemoryLeakAnalysis) count++;
+            if (LoggingAnalysis) count++;
+            if (ConfigurationAnalysis) count++;
+            if (NamingAnalysis) count++;
+            if (TechnicalDebtAnalysis) count++;
+            if (ThreadSafetyAnalysis) count++;
+            if (DocumentationAnalysis) count++;
+            if (CloneAnalysis) count++;
+            if (TestCoverageAnalysis) count++;
+            if (MigrationAnalysis) count++;
+            if (ContractAnalysis) count++;
+            if (ApiDesignAnalysis) count++;
+            if (ImpactAnalysis) count++;
+            return count;
+        }
+    }
+
+    static async Task<int> HandleCacheStats(string projectPath)
+    {
+        try
+        {
+            // Resolve project path
+            if (Directory.Exists(projectPath))
+            {
+                var csprojFiles = Directory.GetFiles(projectPath, "*.csproj");
+                if (csprojFiles.Length == 1)
+                    projectPath = csprojFiles[0];
+            }
+
+            var cache = new AnalysisCache(projectPath);
+            await cache.LoadAsync();
+
+            var stats = cache.GetStatistics();
+
+            Console.WriteLine("Analysis Cache Statistics");
+            Console.WriteLine("=========================");
+            Console.WriteLine($"  Cache directory: {cache.CacheDirectory}");
+            Console.WriteLine($"  Cache version: {stats.CacheVersion}");
+            Console.WriteLine($"  Last updated: {stats.LastUpdated:yyyy-MM-dd HH:mm:ss}");
+            Console.WriteLine();
+            Console.WriteLine($"  Total entries: {stats.TotalEntries}");
+            Console.WriteLine($"  Valid entries: {stats.ValidEntries}");
+            Console.WriteLine($"  Invalid entries: {stats.InvalidEntries}");
+            Console.WriteLine($"  Cached file size: {stats.FormattedSize}");
+            Console.WriteLine($"  Dependencies tracked: {stats.DependencyCount}");
+
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine($"Error: {ex.Message}");
+            Console.ResetColor();
+            return 1;
+        }
+    }
+
+    static async Task<int> HandleClearCache(string projectPath)
+    {
+        try
+        {
+            // Resolve project path
+            if (Directory.Exists(projectPath))
+            {
+                var csprojFiles = Directory.GetFiles(projectPath, "*.csproj");
+                if (csprojFiles.Length == 1)
+                    projectPath = csprojFiles[0];
+            }
+
+            var cache = new AnalysisCache(projectPath);
+            await cache.ClearAsync();
+
+            Console.ForegroundColor = ConsoleColor.Green;
+            Console.WriteLine("Analysis cache cleared successfully.");
+            Console.ResetColor();
+
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine($"Error: {ex.Message}");
+            Console.ResetColor();
+            return 1;
         }
     }
 
@@ -262,12 +534,60 @@ class Program
         return arg?.Substring(prefix.Length + 1);
     }
 
+    static async Task<int> RunLspServerAsync(string[] args)
+    {
+        try
+        {
+            // Parse LSP options
+            var portArg = args.FirstOrDefault(a => a.StartsWith("--lsp-port=", StringComparison.OrdinalIgnoreCase));
+            var useStdio = portArg == null;
+            var tcpPort = 5007;
+
+            if (portArg != null && int.TryParse(portArg.Substring("--lsp-port=".Length), out var port))
+            {
+                tcpPort = port;
+            }
+
+            var options = new LspServerOptions
+            {
+                UseStdio = useStdio,
+                TcpPort = tcpPort,
+                AnalysisDebounceMs = 500,
+                MaxDiagnosticsPerFile = 100,
+                Analyzers = new AnalyzerSettings
+                {
+                    Performance = true,
+                    Security = true,
+                    Refactoring = true,
+                    Optimization = true,
+                    CodeQuality = true,
+                    ExceptionHandling = true,
+                    ResourceLeaks = true
+                }
+            };
+
+            Console.Error.WriteLine("Starting BaseScanner LSP server...");
+            Console.Error.WriteLine($"Mode: {(useStdio ? "stdio" : $"TCP port {tcpPort}")}");
+
+            var server = new BaseScannerLanguageServer(options);
+            await server.RunAsync();
+
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"LSP server error: {ex.Message}");
+            Console.Error.WriteLine(ex.StackTrace);
+            return 1;
+        }
+    }
+
     static async Task<int> HandleRollback(string projectPath)
     {
         Console.WriteLine("Rolling back transformations...");
         try
         {
-            MSBuildLocator.RegisterDefaults();
+            AnalysisService.EnsureMSBuildRegistered();
             var backupService = new BackupService(projectPath);
             var service = new TransformationService(backupService);
             var result = await service.RollbackAsync(null);
@@ -339,7 +659,7 @@ class Program
     {
         try
         {
-            MSBuildLocator.RegisterDefaults();
+            AnalysisService.EnsureMSBuildRegistered();
 
             var filter = new TransformationFilter
             {
@@ -461,6 +781,143 @@ class Program
             Console.ResetColor();
             return 1;
         }
+    }
+
+    static async Task AnalyzeSolution(string solutionPath, CliAnalysisOptions options)
+    {
+        var solutionDirectory = Path.GetDirectoryName(solutionPath)!;
+
+        // Get all .cs files on disk across all project directories
+        var allCsFilesOnDisk = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        
+        // Get all project directories from the solution
+        var slnContent = File.ReadAllLines(solutionPath);
+        var projectPaths = new List<string>();
+        
+        foreach (var line in slnContent)
+        {
+            if (line.TrimStart().StartsWith("Project("))
+            {
+                var parts = line.Split(',');
+                if (parts.Length >= 2)
+                {
+                    var path = parts[1].Trim().Trim('"');
+                    var fullPath = Path.Combine(solutionDirectory, path);
+                    projectPaths.Add(fullPath);
+                }
+            }
+        }
+
+        foreach (var projPath in projectPaths)
+        {
+            var projDir = Path.GetDirectoryName(projPath);
+            if (projDir != null && Directory.Exists(projDir))
+            {
+                var files = Directory.GetFiles(projDir, "*.cs", SearchOption.AllDirectories)
+                    .Where(f => !f.Contains(Path.Combine(projDir, "obj")) &&
+                                !f.Contains(Path.Combine(projDir, "bin")));
+                foreach (var f in files)
+                {
+                    allCsFilesOnDisk.Add(Path.GetFullPath(f));
+                }
+            }
+        }
+
+        Console.WriteLine($"Found {allCsFilesOnDisk.Count} .cs files on disk (excluding bin/obj)");
+
+        using var workspace = MSBuildWorkspace.Create();
+
+#pragma warning disable CS0618
+        workspace.WorkspaceFailed += (sender, e) =>
+        {
+            if (e.Diagnostic.Kind == WorkspaceDiagnosticKind.Failure)
+                Console.WriteLine($"  Warning: {e.Diagnostic.Message}");
+        };
+#pragma warning restore CS0618
+
+        Console.WriteLine("Loading solution...");
+        var solution = await workspace.OpenSolutionAsync(solutionPath);
+        var projects = solution.Projects.ToList();
+        
+        Console.WriteLine($"Found {projects.Count} projects in solution");
+        
+        // Get all compiled files from all projects
+        var compiledFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var project in projects)
+        {
+            var docs = project.Documents.Where(d => d.FilePath != null);
+            foreach (var doc in docs)
+            {
+                compiledFiles.Add(Path.GetFullPath(doc.FilePath!));
+            }
+        }
+
+        Console.WriteLine($"Found {compiledFiles.Count} files in solution compilation");
+        Console.WriteLine();
+
+        // Basic file analysis
+        AnalyzeUnusedFiles(allCsFilesOnDisk, compiledFiles, solutionDirectory);
+
+        // Deep analysis across solution
+        if (options.DeepAnalysis)
+        {
+            Console.WriteLine();
+            Console.WriteLine("Performing deep cross-project analysis...");
+            Console.WriteLine();
+
+            // Get all compilations
+            var compilations = new List<Compilation?>();
+            foreach (var project in projects)
+            {
+                var comp = await project.GetCompilationAsync();
+                compilations.Add(comp);
+            }
+
+            // Run solution-level deep analysis using AnalysisService
+            var analysisService = new AnalysisService();
+            var result = await analysisService.AnalyzeAsync(solutionPath, new AnalysisOptions { DeepAnalysis = true });
+            
+            if (result.DeadCode != null && result.DeadCode.Count > 0)
+            {
+                Console.WriteLine();
+                Console.WriteLine("=== POTENTIALLY DEAD CODE (0 references) ===");
+                Console.WriteLine();
+                
+                // Group by file
+                var groupedDead = result.DeadCode
+                    .GroupBy(d => d.FilePath)
+                    .OrderByDescending(g => g.Count())
+                    .Take(20);
+                    
+                foreach (var group in groupedDead)
+                {
+                    Console.WriteLine($"  {group.Key} ({group.Count()} items)");
+                    foreach (var item in group.Take(5))
+                    {
+                        Console.WriteLine($"    [{item.SymbolKind}] {item.SymbolName} (line {item.Line})");
+                    }
+                    if (group.Count() > 5)
+                    {
+                        Console.WriteLine($"    ... and {group.Count() - 5} more");
+                    }
+                }
+                
+                Console.WriteLine();
+                Console.WriteLine($"Total dead code items: {result.DeadCode.Count}");
+            }
+
+            if (result.LowUsageCode != null && result.LowUsageCode.Count > 0)
+            {
+                Console.WriteLine();
+                Console.WriteLine($"=== LOW USAGE CODE (1-2 references): {result.LowUsageCode.Count} items ===");
+            }
+        }
+
+        Console.WriteLine();
+        Console.WriteLine("=== USAGE SUMMARY ===");
+        Console.WriteLine($"  Total files on disk: {allCsFilesOnDisk.Count}");
+        Console.WriteLine($"  Files in compilation: {compiledFiles.Count}");
+        Console.WriteLine($"  Unreferenced files: {allCsFilesOnDisk.Count - compiledFiles.Count}");
     }
 
     static async Task AnalyzeProject(string projectPath, CliAnalysisOptions options)
@@ -617,6 +1074,369 @@ class Program
         {
             Console.WriteLine();
             await AnalyzeTrends(projectDirectory);
+        }
+
+        // New Analyzers (Phase 1-4) - these use AnalysisService for integrated results
+        var hasNewAnalyzers = options.VulnerabilityAnalysis || options.MemoryLeakAnalysis ||
+                              options.LoggingAnalysis || options.ConfigurationAnalysis ||
+                              options.NamingAnalysis || options.TechnicalDebtAnalysis ||
+                              options.ThreadSafetyAnalysis || options.DocumentationAnalysis ||
+                              options.CloneAnalysis || options.ImpactAnalysis ||
+                              options.TestCoverageAnalysis || options.MigrationAnalysis ||
+                              options.ContractAnalysis || options.ApiDesignAnalysis;
+
+        if (hasNewAnalyzers)
+        {
+            Console.WriteLine();
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            if (options.ComprehensiveMode)
+            {
+                Console.WriteLine("╔══════════════════════════════════════════════════════════════╗");
+                Console.WriteLine("║          COMPREHENSIVE CODE ANALYSIS REPORT                  ║");
+                Console.WriteLine("╚══════════════════════════════════════════════════════════════╝");
+            }
+            else
+            {
+                Console.WriteLine("=== RUNNING NEW ANALYZERS ===");
+            }
+            Console.ResetColor();
+            Console.WriteLine();
+
+            var analysisService = new AnalysisService();
+            var analysisOptions = new AnalysisOptions
+            {
+                VulnerabilityAnalysis = options.VulnerabilityAnalysis,
+                MemoryLeakAnalysis = options.MemoryLeakAnalysis,
+                LoggingAnalysis = options.LoggingAnalysis,
+                ConfigurationAnalysis = options.ConfigurationAnalysis,
+                NamingAnalysis = options.NamingAnalysis,
+                TechnicalDebtAnalysis = options.TechnicalDebtAnalysis,
+                ThreadSafetyAnalysis = options.ThreadSafetyAnalysis,
+                DocumentationAnalysis = options.DocumentationAnalysis,
+                CloneAnalysis = options.CloneAnalysis,
+                TestCoverageAnalysis = options.TestCoverageAnalysis,
+                MigrationAnalysis = options.MigrationAnalysis,
+                ContractAnalysis = options.ContractAnalysis,
+                ApiDesignAnalysis = options.ApiDesignAnalysis,
+                ImpactAnalysis = options.ImpactAnalysis,
+                ImpactSymbol = options.ImpactSymbol
+            };
+
+            var result = await analysisService.AnalyzeAsync(projectPath, analysisOptions);
+
+            // Display results for each enabled analyzer
+            if (options.VulnerabilityAnalysis && result.Vulnerabilities != null)
+            {
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.WriteLine($"  VULNERABILITIES: {result.Vulnerabilities.VulnerablePackages} vulnerable, {result.Vulnerabilities.OutdatedPackages} outdated");
+                Console.ResetColor();
+                foreach (var vuln in result.Vulnerabilities.Vulnerabilities.Take(options.TopN))
+                {
+                    Console.WriteLine($"    [{vuln.Severity}] {vuln.PackageId}: {vuln.Description}");
+                }
+            }
+
+            if (options.MemoryLeakAnalysis && result.MemoryLeaks != null)
+            {
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.WriteLine($"  MEMORY LEAKS: {result.MemoryLeaks.TotalLeaks} potential leaks");
+                Console.ResetColor();
+                foreach (var leak in result.MemoryLeaks.Leaks.Take(options.TopN))
+                {
+                    Console.WriteLine($"    [{leak.LeakType}] {leak.FilePath}:{leak.Line} - {leak.Description}");
+                }
+            }
+
+            if (options.LoggingAnalysis && result.LoggingQuality != null)
+            {
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.WriteLine($"  LOGGING QUALITY: {result.LoggingQuality.Issues.Count} issues, {result.LoggingQuality.StructuredLoggingPercentage:F0}% structured");
+                Console.ResetColor();
+                foreach (var issue in result.LoggingQuality.Issues.Take(options.TopN))
+                {
+                    Console.WriteLine($"    [{issue.IssueType}] {issue.FilePath}:{issue.Line} - {issue.Recommendation}");
+                }
+            }
+
+            if (options.ConfigurationAnalysis && result.Configuration != null)
+            {
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.WriteLine($"  CONFIGURATION: {result.Configuration.HardcodedValues.Count} hardcoded values, {result.Configuration.MissingConfigKeys.Count} missing keys");
+                Console.ResetColor();
+                foreach (var config in result.Configuration.HardcodedValues.Take(options.TopN))
+                {
+                    Console.WriteLine($"    [{config.ValueType}] {config.FilePath}:{config.Line} - {config.Recommendation}");
+                }
+            }
+
+            if (options.NamingAnalysis && result.Naming != null)
+            {
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.WriteLine($"  NAMING: {result.Naming.TotalViolations} violations");
+                Console.ResetColor();
+                foreach (var violation in result.Naming.Violations.Take(options.TopN))
+                {
+                    Console.WriteLine($"    [{violation.Rule}] {violation.CurrentName} -> {violation.SuggestedName}");
+                }
+            }
+
+            if (options.TechnicalDebtAnalysis && result.TechnicalDebt != null)
+            {
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.WriteLine($"  TECHNICAL DEBT: Rating {result.TechnicalDebt.DebtRating}, {result.TechnicalDebt.TotalDebtDays:F1} days");
+                Console.ResetColor();
+                Console.WriteLine($"    Quick Wins: {result.TechnicalDebt.QuickWins.Count}");
+                Console.WriteLine($"    Major Projects: {result.TechnicalDebt.MajorProjects.Count}");
+            }
+
+            if (options.ThreadSafetyAnalysis && result.ThreadSafety != null)
+            {
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.WriteLine($"  THREAD SAFETY: {result.ThreadSafety.TotalIssues} issues");
+                Console.ResetColor();
+                foreach (var issue in result.ThreadSafety.Issues.Take(options.TopN))
+                {
+                    Console.WriteLine($"    [{issue.Severity}] {issue.FilePath}:{issue.Line} - {issue.Description}");
+                }
+            }
+
+            if (options.DocumentationAnalysis && result.Documentation != null)
+            {
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.WriteLine($"  DOCUMENTATION: {result.Documentation.DocumentationCoverage:F0}% coverage, {result.Documentation.MissingDocs.Count} missing");
+                Console.ResetColor();
+            }
+
+            if (options.CloneAnalysis && result.Clones != null)
+            {
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.WriteLine($"  CODE CLONES: {result.Clones.TotalCloneClasses} clone classes, {result.Clones.CloneCoverage:F1}% duplication");
+                Console.ResetColor();
+                foreach (var clone in result.Clones.CloneClasses.Take(options.TopN))
+                {
+                    Console.WriteLine($"    [{clone.CloneType}] {clone.InstanceCount} instances, {clone.LinesPerInstance} lines each");
+                }
+            }
+
+            if (options.ImpactAnalysis && result.Impact != null)
+            {
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.WriteLine($"  IMPACT ANALYSIS: {result.Impact.TargetSymbol}");
+                Console.ResetColor();
+                Console.WriteLine($"    Direct dependents: {result.Impact.DirectDependents}");
+                Console.WriteLine($"    Transitive dependents: {result.Impact.TransitiveDependents}");
+                Console.WriteLine($"    Risk level: {result.Impact.RiskLevel}");
+            }
+
+            // Test Coverage Analysis
+            if (options.TestCoverageAnalysis && result.TestCoverage != null)
+            {
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.WriteLine($"  TEST COVERAGE: {result.TestCoverage.OverallCoverage:F1}% overall coverage");
+                Console.ResetColor();
+                Console.WriteLine($"    Covered Methods: {result.TestCoverage.CoveredMethods}/{result.TestCoverage.TotalMethods}");
+                Console.WriteLine($"    Uncovered Methods: {result.TestCoverage.UncoveredMethods}");
+                Console.WriteLine($"    Test Smells: {result.TestCoverage.TestSmells?.Count ?? 0}");
+                Console.WriteLine($"    Critical Gaps: {result.TestCoverage.CriticalGaps?.Count ?? 0}");
+                if (result.TestCoverage.TestSmells?.Count > 0)
+                {
+                    foreach (var smell in result.TestCoverage.TestSmells.Take(3))
+                    {
+                        Console.WriteLine($"      [{smell.SmellType}] {smell.TestName}: {smell.Description}");
+                    }
+                }
+            }
+
+            // Migration Analysis
+            if (options.MigrationAnalysis && result.Migration != null)
+            {
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.WriteLine($"  MIGRATION: {result.Migration.CurrentFramework} -> {result.Migration.RecommendedFramework}");
+                Console.ResetColor();
+                Console.WriteLine($"    Complexity: {result.Migration.Complexity}");
+                Console.WriteLine($"    Total Migration Items: {result.Migration.TotalMigrationItems}");
+                Console.WriteLine($"    Deprecated APIs: {result.Migration.DeprecatedApis?.Count ?? 0}");
+                Console.WriteLine($"    API Migrations: {result.Migration.ApiMigrations?.Count ?? 0}");
+                Console.WriteLine($"    Platform Issues: {result.Migration.PlatformIssues?.Count ?? 0}");
+                if (result.Migration.ApiMigrations?.Count > 0)
+                {
+                    foreach (var api in result.Migration.ApiMigrations.Take(3))
+                    {
+                        Console.WriteLine($"      {api.OldApi} -> {api.NewApi} ({api.OccurrenceCount} occurrences)");
+                    }
+                }
+            }
+
+            // Contract Analysis
+            if (options.ContractAnalysis && result.Contracts != null)
+            {
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.WriteLine($"  CONTRACTS: Analyzing preconditions and invariants");
+                Console.ResetColor();
+                Console.WriteLine($"    Implicit Preconditions: {result.Contracts.Preconditions?.Count ?? 0}");
+                Console.WriteLine($"    Postconditions: {result.Contracts.Postconditions?.Count ?? 0}");
+                Console.WriteLine($"    Hidden Side Effects: {result.Contracts.SideEffects?.Count ?? 0}");
+                Console.WriteLine($"    Suggested Guards: {result.Contracts.SuggestedGuards?.Count ?? 0}");
+                if (result.Contracts.Preconditions?.Count > 0)
+                {
+                    foreach (var pre in result.Contracts.Preconditions.Take(3))
+                    {
+                        Console.WriteLine($"      [{pre.PreconditionType}] {pre.MethodName}: {pre.Parameter} - {pre.Suggestion}");
+                    }
+                }
+            }
+
+            // API Design Analysis
+            if (options.ApiDesignAnalysis && result.ApiDesign != null)
+            {
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.WriteLine($"  API DESIGN: Checking consistency and best practices");
+                Console.ResetColor();
+                Console.WriteLine($"    Consistency Issues: {result.ApiDesign.ConsistencyIssues?.Count ?? 0}");
+                Console.WriteLine($"    Potential Breaking Changes: {result.ApiDesign.PotentialBreakingChanges?.Count ?? 0}");
+                Console.WriteLine($"    REST Violations: {result.ApiDesign.RestViolations?.Count ?? 0}");
+                Console.WriteLine($"    Improvement Suggestions: {result.ApiDesign.Suggestions?.Count ?? 0}");
+                if (result.ApiDesign.ConsistencyIssues?.Count > 0)
+                {
+                    foreach (var issue in result.ApiDesign.ConsistencyIssues.Take(3))
+                    {
+                        Console.WriteLine($"      [{issue.IssueType}] {issue.Description}");
+                    }
+                }
+            }
+
+            // Comprehensive Summary
+            if (options.ComprehensiveMode)
+            {
+                Console.WriteLine();
+                Console.ForegroundColor = ConsoleColor.Cyan;
+                Console.WriteLine("╔══════════════════════════════════════════════════════════════╗");
+                Console.WriteLine("║                    ANALYSIS SUMMARY                          ║");
+                Console.WriteLine("╚══════════════════════════════════════════════════════════════╝");
+                Console.ResetColor();
+                Console.WriteLine();
+
+                // Calculate overall health score
+                var totalIssues = (result.Summary?.TotalIssues ?? 0) +
+                                  (result.Vulnerabilities?.VulnerablePackages ?? 0) +
+                                  (result.MemoryLeaks?.TotalLeaks ?? 0) +
+                                  (result.ThreadSafety?.TotalIssues ?? 0) +
+                                  (result.Naming?.TotalViolations ?? 0);
+
+                var criticalIssues = (result.Vulnerabilities?.Vulnerabilities.Count(v => v.Severity == "Critical") ?? 0) +
+                                     (result.ThreadSafety?.Issues.Count(i => i.Severity == "Critical") ?? 0);
+
+                var healthScore = Math.Max(0, 100 - (totalIssues * 2) - (criticalIssues * 10));
+                var healthGrade = healthScore >= 90 ? "A" : healthScore >= 80 ? "B" : healthScore >= 70 ? "C" : healthScore >= 60 ? "D" : "F";
+
+                Console.ForegroundColor = healthScore >= 80 ? ConsoleColor.Green : healthScore >= 60 ? ConsoleColor.Yellow : ConsoleColor.Red;
+                Console.WriteLine($"  PROJECT HEALTH SCORE: {healthScore}/100 (Grade: {healthGrade})");
+                Console.ResetColor();
+                Console.WriteLine();
+
+                Console.WriteLine("  METRICS SUMMARY:");
+                Console.WriteLine($"    Total Issues Found: {totalIssues}");
+                Console.WriteLine($"    Critical Issues: {criticalIssues}");
+                if (result.TechnicalDebt != null)
+                    Console.WriteLine($"    Technical Debt: {result.TechnicalDebt.TotalDebtDays:F1} days (Rating: {result.TechnicalDebt.DebtRating})");
+                if (result.Documentation != null)
+                    Console.WriteLine($"    Documentation Coverage: {result.Documentation.DocumentationCoverage:F0}%");
+                if (result.TestCoverage != null)
+                    Console.WriteLine($"    Test Coverage: {result.TestCoverage.OverallCoverage:F1}%");
+                if (result.Clones != null)
+                    Console.WriteLine($"    Code Duplication: {result.Clones.CloneCoverage:F1}%");
+
+                Console.WriteLine();
+                Console.WriteLine("  TOP RECOMMENDATIONS:");
+                var recommendations = new List<string>();
+
+                if ((result.Vulnerabilities?.VulnerablePackages ?? 0) > 0)
+                    recommendations.Add($"  1. Update {result.Vulnerabilities!.VulnerablePackages} vulnerable dependencies");
+                if ((result.ThreadSafety?.TotalIssues ?? 0) > 0)
+                    recommendations.Add($"  2. Fix {result.ThreadSafety!.TotalIssues} thread safety issues");
+                if ((result.MemoryLeaks?.TotalLeaks ?? 0) > 0)
+                    recommendations.Add($"  3. Address {result.MemoryLeaks!.TotalLeaks} potential memory leaks");
+                if ((result.TechnicalDebt?.QuickWins.Count ?? 0) > 0)
+                    recommendations.Add($"  4. Start with {result.TechnicalDebt!.QuickWins.Count} quick win debt items");
+                if ((result.Documentation?.DocumentationCoverage ?? 100) < 50)
+                    recommendations.Add($"  5. Improve documentation coverage (currently {result.Documentation!.DocumentationCoverage:F0}%)");
+
+                if (recommendations.Count == 0)
+                    recommendations.Add("  Great job! No critical issues found.");
+
+                foreach (var rec in recommendations.Take(5))
+                    Console.WriteLine(rec);
+
+                Console.WriteLine();
+                Console.ForegroundColor = ConsoleColor.DarkGray;
+                Console.WriteLine($"  Analysis completed at {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+                Console.WriteLine($"  Analyzers run: {options.GetTotalAnalyzerCount()}");
+                Console.ResetColor();
+            }
+
+            // Group-by-file analysis
+            if (options.GroupByFile)
+            {
+                Console.WriteLine();
+                Console.ForegroundColor = ConsoleColor.Cyan;
+                Console.WriteLine("╔══════════════════════════════════════════════════════════════╗");
+                Console.WriteLine("║                FILE HOTSPOT ANALYSIS                         ║");
+                Console.WriteLine("╚══════════════════════════════════════════════════════════════╝");
+                Console.ResetColor();
+                Console.WriteLine();
+
+                var fileIssues = new Dictionary<string, int>();
+
+                // Aggregate issues from all analyzers
+                if (result.MemoryLeaks?.Leaks != null)
+                    foreach (var leak in result.MemoryLeaks.Leaks)
+                    {
+                        var file = Path.GetFileName(leak.FilePath);
+                        fileIssues[file] = fileIssues.GetValueOrDefault(file) + 1;
+                    }
+
+                if (result.ThreadSafety?.Issues != null)
+                    foreach (var issue in result.ThreadSafety.Issues)
+                    {
+                        var file = Path.GetFileName(issue.FilePath);
+                        fileIssues[file] = fileIssues.GetValueOrDefault(file) + 1;
+                    }
+
+                if (result.LoggingQuality?.Issues != null)
+                    foreach (var issue in result.LoggingQuality.Issues)
+                    {
+                        var file = Path.GetFileName(issue.FilePath);
+                        fileIssues[file] = fileIssues.GetValueOrDefault(file) + 1;
+                    }
+
+                if (result.Configuration?.HardcodedValues != null)
+                    foreach (var config in result.Configuration.HardcodedValues)
+                    {
+                        var file = Path.GetFileName(config.FilePath);
+                        fileIssues[file] = fileIssues.GetValueOrDefault(file) + 1;
+                    }
+
+                if (result.Naming?.Violations != null)
+                    foreach (var violation in result.Naming.Violations)
+                    {
+                        var file = Path.GetFileName(violation.FilePath);
+                        fileIssues[file] = fileIssues.GetValueOrDefault(file) + 1;
+                    }
+
+                Console.WriteLine("  FILES WITH MOST ISSUES:");
+                var topFiles = fileIssues.OrderByDescending(kvp => kvp.Value).Take(options.TopN);
+                foreach (var (file, count) in topFiles)
+                {
+                    var barLength = Math.Min(count, 50);
+                    var bar = new string('█', barLength);
+                    Console.ForegroundColor = count > 30 ? ConsoleColor.Red : count > 15 ? ConsoleColor.Yellow : ConsoleColor.Green;
+                    Console.WriteLine($"    {file,-40} {count,4} issues {bar}");
+                }
+                Console.ResetColor();
+                Console.WriteLine();
+            }
+
+            Console.WriteLine();
         }
     }
 

@@ -1,6 +1,6 @@
 # BaseScanner
 
-A powerful C# code analysis tool that provides deep insights into code quality, performance issues, security vulnerabilities, and refactoring opportunities. Works as both a CLI tool and an MCP (Model Context Protocol) server for Claude Code integration.
+A comprehensive C# code analysis platform providing deep insights into code quality, security vulnerabilities, performance issues, thread safety, technical debt, and refactoring opportunities. Features include semantic analysis, memory leak detection, clone detection, incremental analysis, and interactive TUI. Works as a CLI tool, Language Server (LSP), and MCP server for Claude Code integration.
 
 ## Features
 
@@ -23,6 +23,26 @@ A powerful C# code analysis tool that provides deep insights into code quality, 
 | `--security` | Security vulnerability analysis with CWE references |
 | `--dashboard` | Project health metrics dashboard |
 | `--trends` | Trend analysis using git history |
+| `--thread-safety` | Thread safety, race conditions, async patterns, deadlock risks |
+| `--tech-debt` | Technical debt calculation with time estimates and quick wins |
+| `--memory-leaks` | Memory leak detection (event handlers, closures, disposables) |
+| `--documentation` | Documentation quality, coverage, naming quality |
+| `--naming` | Naming convention compliance, semantic analysis |
+| `--logging` | Logging quality, sensitive data exposure, structured logging |
+| `--clones` | Semantic code clone detection with extraction opportunities |
+| `--impact` | Change impact analysis, blast radius, dependency graph |
+| `--configuration` | Hardcoded values, config validation, environment detection |
+| `--contracts` | Preconditions, side effects, invariant violations |
+| `--migration` | Framework migration assistant with deprecation detection |
+| `--api-design` | API consistency, breaking changes, REST best practices |
+| `--vuln-scan` | NuGet vulnerability scanner (CVE/GHSA) |
+| `--concurrency` | Concurrency issues (floating tasks, locks, reentrancy) |
+| `--aspnet` | ASP.NET Core security (auth, CORS, CSRF, mass assignment) |
+| `--ef` | Entity Framework issues (N+1, tracking, lazy loading) |
+| `--quality` | Code quality, cognitive complexity, testability |
+| `--incremental` | Enable incremental analysis with caching |
+| `--tui` | Launch interactive terminal UI |
+| `--lsp` | Start Language Server Protocol server |
 | `--all` | Run all analyses |
 
 ### Transformation Options
@@ -82,14 +102,35 @@ dotnet run -- "path/to/project.csproj" --all
 # Quick scan
 dotnet run -- "path/to/project" --deep --perf
 
-# Optimization suggestions only
+# Security analysis
+dotnet run -- "path/to/project" --security --vuln-scan
+
+# Thread safety and concurrency
+dotnet run -- "path/to/project" --thread-safety --concurrency
+
+# Technical debt analysis
+dotnet run -- "path/to/project" --tech-debt
+
+# Memory leak detection
+dotnet run -- "path/to/project" --memory-leaks
+
+# Documentation quality
+dotnet run -- "path/to/project" --documentation --naming
+
+# Code clones
+dotnet run -- "path/to/project" --clones --min-lines=6
+
+# Change impact analysis
+dotnet run -- "path/to/project" --impact --symbol="MyNamespace.MyClass.MyMethod"
+
+# Framework migration
+dotnet run -- "path/to/project" --migration --target=net9.0
+
+# API design analysis
+dotnet run -- "path/to/project" --api-design --aspnet
+
+# Optimization suggestions
 dotnet run -- "path/to/project" --optimize
-
-# Security vulnerability scan
-dotnet run -- "path/to/project" --security
-
-# Project health dashboard
-dotnet run -- "path/to/project" --dashboard
 
 # Preview and apply transformations
 dotnet run -- "path/to/project" --preview --confidence=high
@@ -103,6 +144,15 @@ dotnet run -- "path/to/project" --refactor-analyze --severity=critical
 dotnet run -- "path/to/project" --refactor-preview --file=MyClass.cs --target=MyClass
 dotnet run -- "path/to/project" --refactor-apply --file=MyClass.cs --target=MyClass
 dotnet run -- "path/to/project" --refactor-chain --file=MyClass.cs --target=MyClass --chain=godclass
+
+# Incremental analysis (uses caching)
+dotnet run -- "path/to/project" --incremental --all
+
+# Interactive TUI mode
+dotnet run -- "path/to/project" --tui
+
+# Language Server mode (for IDE integration)
+dotnet run -- "path/to/project" --lsp
 ```
 
 ### MCP Server Mode (Claude Code Integration)
@@ -112,29 +162,91 @@ dotnet run -- "path/to/project" --refactor-chain --file=MyClass.cs --target=MyCl
 claude mcp add --transport stdio basescanner -- dotnet run --project "path/to/BaseScanner" -- --mcp
 ```
 
-Available MCP tools:
+Available MCP tools (40+ tools):
 
+### Core Analysis
 | Tool | Description |
 |------|-------------|
 | `QuickProjectScan` | Fast health check with top issues |
 | `AnalyzeCsharpProject` | Full analysis with configurable options |
 | `ListAnalysisTypes` | Show available analysis types |
-| `AnalyzeOptimizations` | Find optimization opportunities with code suggestions |
+| `RunFullAnalysis` | Comprehensive analysis (security, concurrency, frameworks, quality) |
+| `RunComprehensiveAnalysis` | All Phase 1-4 analyzers in parallel |
+
+### Security & Vulnerabilities
+| Tool | Description |
+|------|-------------|
 | `AnalyzeSecurity` | Security vulnerability analysis with CWE references |
-| `GetProjectDashboard` | Project health metrics (score, complexity, debt) |
-| `PreviewTransformations` | Preview code transformations before applying |
-| `ApplyTransformations` | Apply transformations with automatic backup |
+| `ScanVulnerabilities` | NuGet dependency CVE/GHSA scanner |
+| `AnalyzeTaintFlow` | Track tainted data from sources to sinks |
+| `AnalyzeAspNetCore` | ASP.NET Core security (auth, CORS, CSRF) |
+| `AnalyzeConfiguration` | Hardcoded values, config validation |
+
+### Code Quality & Complexity
+| Tool | Description |
+|------|-------------|
+| `AnalyzeCodeQuality` | Cognitive complexity, code smells, testability |
+| `AnalyzeCognitiveComplexity` | Sonar cognitive complexity analysis |
+| `GetProjectDashboard` | Project health metrics dashboard |
+| `CalculateTechnicalDebt` | Debt rating, time estimates, quick wins |
+| `AnalyzeDocumentation` | Documentation quality and coverage |
+| `AnalyzeNamingConventions` | Naming compliance and semantic analysis |
+
+### Concurrency & Threading
+| Tool | Description |
+|------|-------------|
+| `AnalyzeConcurrency` | Floating tasks, async void, lock patterns |
+| `AnalyzeThreadSafety` | Race conditions, shared state, deadlock risks |
+
+### Performance & Optimization
+| Tool | Description |
+|------|-------------|
+| `AnalyzeOptimizations` | Find optimization opportunities |
+| `CompareOptimizationStrategies` | Compare strategies in virtual workspace |
+| `PreviewTransformations` | Preview code transformations |
+| `ApplyTransformations` | Apply transformations with backup |
 | `RollbackTransformations` | Restore from backup |
 | `ListTransformationBackups` | List available backups |
-| `AnalyzeTaintFlow` | Track tainted data from sources to sinks |
+
+### Memory & Resources
+| Tool | Description |
+|------|-------------|
+| `DetectMemoryLeaks` | Event handlers, closures, disposables |
+| `AnalyzeLoggingQuality` | Log levels, sensitive data, structured logging |
+
+### Code Duplication
+| Tool | Description |
+|------|-------------|
+| `DetectCodeClones` | Semantic clone detection with extraction opportunities |
+
+### Dependencies & Impact
+| Tool | Description |
+|------|-------------|
+| `AnalyzeChangeImpact` | Blast radius, dependency graph, risk assessment |
+| `AnalyzeEntityFramework` | EF Core N+1, tracking, lazy loading issues |
+
+### Refactoring
+| Tool | Description |
+|------|-------------|
+| `AnalyzeRefactoringOpportunities` | God classes, LCOM4 metrics |
+| `PreviewRefactoring` | Compare refactoring strategies |
+| `ApplyRefactoring` | Apply best strategy with backup |
+| `ApplyRefactoringChain` | Apply strategy sequences |
+| `AnalyzeCohesion` | Class cohesion and method clusters |
+| `GetRefactoringChains` | Pre-built strategy chains |
+| `ListRefactoringStrategies` | List available strategies |
+
+### Contracts & Architecture
+| Tool | Description |
+|------|-------------|
+| `AnalyzeContracts` | Preconditions, side effects, invariants |
+| `AnalyzeApiDesign` | API consistency, breaking changes, REST |
+
+### Migration & Trends
+| Tool | Description |
+|------|-------------|
+| `AssistMigration` | Framework migration with deprecation detection |
 | `AnalyzeTrends` | Analyze trends over git history |
-| `AnalyzeRefactoringOpportunities` | Find god classes and code smells with LCOM4 |
-| `PreviewRefactoring` | Compare refactoring strategies in virtual workspace |
-| `ApplyRefactoring` | Apply best strategy with automatic backup |
-| `ApplyRefactoringChain` | Apply a sequence of strategies for comprehensive remediation |
-| `AnalyzeCohesion` | Analyze class cohesion and method clusters |
-| `GetRefactoringChains` | Get pre-built strategy chains for common smells |
-| `ListRefactoringStrategies` | List available refactoring strategies |
 
 ## Analysis Details
 
@@ -267,6 +379,140 @@ Complexity Chain:   SimplifyMethod → ReplaceConditional → ExtractMethod
 - Deep inheritance hierarchies
 - Composition over inheritance candidates
 
+### Thread Safety & Concurrency Analysis
+
+Detects concurrency issues and threading problems:
+
+| Category | Description |
+|----------|-------------|
+| Race Conditions | Shared mutable state without proper synchronization |
+| Lock Issues | Deadlock risks, lock ordering violations, excessive locking |
+| Async Patterns | Async void, floating tasks, missing ConfigureAwait |
+| Atomicity Violations | Non-atomic read-modify-write operations |
+| Reentrancy Issues | Async reentrancy in non-reentrant code |
+
+### Technical Debt Analysis
+
+Calculates technical debt with actionable metrics:
+
+- **Debt Rating**: A-E rating based on total debt
+- **Time Estimates**: Minutes/hours/days to fix each issue
+- **Quick Wins**: High-payoff, low-effort improvements
+- **Major Projects**: High-impact items requiring significant effort
+- **File Hotspots**: Files with highest debt concentration
+- **Trend Analysis**: Improving vs worsening files
+- **Payoff Plans**: Optimized debt reduction strategies within time budgets
+
+### Memory Leak Detection
+
+Identifies memory leak patterns:
+
+- Unsubscribed event handlers (UI, domain events, weak events)
+- Closure captures of disposable/large objects
+- Static/singleton collection growth
+- IDisposable leaks and missing using statements
+- Timer/callback leaks
+- Estimated memory impact per leak
+
+### Documentation Quality
+
+Analyzes documentation completeness and quality:
+
+- XML documentation coverage percentage
+- Missing public API documentation
+- Stale/TODO comments (TODO, FIXME, HACK)
+- Naming quality analysis
+- Misleading parameter names
+- Documentation debt scoring
+
+### Naming Conventions
+
+Comprehensive naming analysis:
+
+- PascalCase/camelCase compliance
+- Semantic naming issues (async methods, boolean fields)
+- Misleading names (return type mismatches, boolean logic)
+- Term inconsistencies across codebase
+- Abbreviation consistency
+- Context-aware suggestions
+
+### Logging Quality
+
+Evaluates logging practices:
+
+- Log level appropriateness (exceptions, control flow)
+- Sensitive data exposure (PII, credentials, tokens)
+- Structured logging usage
+- Missing correlation IDs
+- Exception logging patterns
+- Framework detection (ILogger, Serilog, NLog, log4net)
+
+### Code Clone Detection
+
+Semantic clone detection beyond textual duplicates:
+
+- **Type-1**: Exact clones (whitespace/comments differ)
+- **Type-2**: Renamed clones (identifiers differ)
+- **Type-3**: Gapped clones (statements added/removed)
+- Clone coverage metrics
+- Extraction opportunities with suggested method names
+- Estimated lines saved by refactoring
+
+### Change Impact Analysis
+
+Analyzes blast radius of code changes:
+
+- Direct and transitive dependency impact
+- Affected file counts and paths
+- Risk scoring (low/medium/high/critical)
+- Public API impact assessment
+- Breaking change detection
+- Mitigation strategies
+- Dependency graph statistics
+
+### Configuration Analysis
+
+Detects configuration issues:
+
+- Hardcoded configuration values
+- Environment-specific code
+- Config key validation against config files
+- Missing/unused configuration keys
+- Schema validation
+- Type mismatch detection
+
+### Contract Analysis
+
+Analyzes implicit contracts in code:
+
+- Missing preconditions (null checks, range validation)
+- Hidden side effects in pure-looking methods
+- Invariant violations
+- Guard clause suggestions
+- Method purity analysis
+
+### Migration Assistant
+
+Assists with .NET framework migrations:
+
+- Deprecated API detection
+- Modern replacement suggestions
+- Platform-specific code identification
+- Compatibility analysis
+- Migration plan generation
+- Blocking issue identification
+
+### API Design Analysis
+
+Evaluates API design quality:
+
+- Consistency across endpoints
+- Breaking change detection
+- REST/HTTP best practices
+- Versioning strategy issues
+- Controller action analysis
+- Route pattern validation
+
 ### Dashboard Metrics
 
 - **Health Score**: Overall project quality (0-100)
@@ -274,6 +520,82 @@ Complexity Chain:   SimplifyMethod → ReplaceConditional → ExtractMethod
 - **Maintainability Index**: Code maintainability score
 - **Technical Debt**: Estimated remediation time
 - **Hotspots**: Files with most issues
+
+## Advanced Features
+
+### Interactive Terminal UI (TUI)
+
+Launch an interactive terminal interface for exploring analysis results:
+
+- **Filter Panel**: Filter issues by severity, category, file
+- **Issue Detail View**: Drill down into specific issues with code context
+- **Diff Preview**: Preview transformations before applying
+- **Navigation**: Keyboard shortcuts for efficient browsing
+- **Real-time Updates**: Watch mode for continuous analysis
+
+```bash
+dotnet run -- "path/to/project" --tui
+```
+
+### Language Server Protocol (LSP)
+
+IDE integration via Language Server Protocol:
+
+- **Diagnostics**: Real-time issue detection as you type
+- **Code Actions**: Quick fixes and refactoring suggestions
+- **Hover Information**: Detailed issue descriptions on hover
+- **Code Lens**: Inline metrics and complexity indicators
+
+Supported in VS Code, Visual Studio, and other LSP-compatible editors.
+
+### Incremental Analysis
+
+Cache-based incremental analysis for faster repeated scans:
+
+- **Change Detection**: Only analyzes modified files
+- **Dependency Tracking**: Re-analyzes affected dependents
+- **Cache Invalidation**: Smart cache invalidation on config changes
+- **Performance**: 10-100x faster on unchanged codebases
+
+The cache is stored in `.basescanner/` directory.
+
+### Reporting & Integration
+
+Multiple output formats for CI/CD integration:
+
+| Format | Description | Use Case |
+|--------|-------------|----------|
+| **SARIF** | Static Analysis Results Interchange Format | Universal, GitHub integration |
+| **HTML** | Rich interactive HTML report | Human review, dashboards |
+| **JUnit XML** | JUnit-compatible test results | CI/CD test reporting |
+| **GitHub Annotations** | GitHub Actions workflow annotations | PR comments, check runs |
+| **Azure DevOps** | Azure Pipelines integration | Azure DevOps builds |
+
+```bash
+dotnet run -- "path/to/project" --all --report=sarif --output=results.sarif
+```
+
+### Git Hooks
+
+Automatic git hook generation and installation:
+
+- **Pre-commit**: Block commits with critical issues
+- **Pre-push**: Run full analysis before push
+- **Commit-msg**: Validate commit message format
+- **Custom Hooks**: Define custom quality gates
+
+```bash
+dotnet run -- --install-hooks "path/to/repo"
+```
+
+### ML-Powered Confidence Scoring
+
+Machine learning-based confidence scoring for suggestions:
+
+- **Feature Extraction**: Analyzes code context, patterns
+- **Pattern Learning**: Learns from accepted/rejected suggestions
+- **Feedback Loop**: Improves accuracy over time
+- **Confidence Levels**: High/Medium/Low confidence ratings
 
 ## Output Example
 
@@ -319,8 +641,56 @@ BaseScanner/
 ├── Analyzers/
 │   ├── ArchitectureAnalyzer.cs
 │   ├── OptimizationAnalyzer.cs
-│   ├── Concurrency/
-│   │   └── ConcurrencyAnalyzer.cs
+│   ├── Api/                           # API design analysis
+│   │   ├── ApiDesignAnalyzer.cs
+│   │   ├── BreakingChangeDetector.cs
+│   │   ├── ConsistencyAnalyzer.cs
+│   │   ├── RestAnalyzer.cs
+│   │   └── VersioningAnalyzer.cs
+│   ├── Clones/                        # Semantic clone detection
+│   │   ├── CloneAnalysisEngine.cs
+│   │   ├── CloneClassifier.cs
+│   │   ├── SemanticCloneDetector.cs
+│   │   ├── SemanticHasher.cs
+│   │   └── SyntaxNormalizer.cs
+│   ├── Concurrency/                   # Thread safety analysis
+│   │   ├── ConcurrencyAnalyzer.cs
+│   │   ├── ThreadSafetyAnalyzer.cs
+│   │   └── Detectors/
+│   │       ├── AsyncReentrancyDetector.cs
+│   │       ├── AtomicityDetector.cs
+│   │       ├── LockAnalyzer.cs
+│   │       ├── RaceConditionDetector.cs
+│   │       └── SharedStateDetector.cs
+│   ├── Configuration/                 # Configuration analysis
+│   │   ├── ConfigurationAnalyzer.cs
+│   │   ├── ConfigSchemaValidator.cs
+│   │   ├── ConfigUsageAnalyzer.cs
+│   │   ├── EnvironmentCodeDetector.cs
+│   │   └── HardcodedValueDetector.cs
+│   ├── Contracts/                     # Contract analysis
+│   │   └── ContractAnalyzer.cs
+│   ├── Debt/                          # Technical debt
+│   │   └── TechnicalDebtScorer.cs
+│   ├── Dependencies/                  # Dependency analysis
+│   │   └── VulnerabilityScanner.cs
+│   ├── Documentation/                 # Documentation quality
+│   │   ├── DocumentationAnalyzer.cs
+│   │   └── Detectors/
+│   ├── Impact/                        # Change impact analysis
+│   │   └── ChangeImpactAnalyzer.cs
+│   ├── Logging/                       # Logging quality
+│   │   └── LoggingQualityAnalyzer.cs
+│   ├── Memory/                        # Memory leak detection
+│   │   ├── MemoryLeakDetector.cs
+│   │   └── Detectors/
+│   ├── Migration/                     # Framework migration
+│   │   ├── MigrationAssistant.cs
+│   │   └── Detectors/
+│   ├── Naming/                        # Naming conventions
+│   │   └── NamingConventionAnalyzer.cs
+│   ├── Testing/                       # Test quality analysis
+│   │   └── Detectors/
 │   ├── Frameworks/
 │   │   ├── AspNetCoreAnalyzer.cs
 │   │   └── EntityFrameworkAnalyzer.cs
@@ -340,18 +710,31 @@ BaseScanner/
 │       ├── CryptoAnalyzer.cs
 │       ├── DeserializationDetector.cs
 │       ├── InjectionDetector.cs
-│       ├── ISecurityDetector.cs
 │       ├── PathTraversalDetector.cs
 │       ├── SecretDetector.cs
 │       └── SecurityAnalyzer.cs
 ├── Analysis/
+│   ├── AnalysisCache.cs              # Incremental analysis cache
+│   ├── ChangeDetector.cs             # File change detection
 │   ├── DataFlowEngine.cs
+│   ├── DependencyTracker.cs          # Dependency tracking
+│   ├── IncrementalAnalysisEngine.cs  # Incremental engine
 │   ├── MetricsDashboard.cs
 │   ├── TaintTracker.cs
 │   └── TrendAnalyzer.cs
 ├── Context/
 │   ├── CodeContext.cs
 │   └── ContextCache.cs
+├── Hooks/                             # Git hooks system
+│   ├── HookConfigLoader.cs
+│   ├── HookGenerator.cs
+│   ├── HookInstaller.cs
+│   └── HookTemplates.cs
+├── ML/                                # Machine learning
+│   ├── ConfidenceScorer.cs
+│   ├── FeatureExtractor.cs
+│   ├── FeedbackStore.cs
+│   └── PatternLearner.cs
 ├── Refactoring/
 │   ├── RefactoringOrchestrator.cs
 │   ├── Analysis/
@@ -370,6 +753,19 @@ BaseScanner/
 │       ├── ReplaceConditionalStrategy.cs
 │       ├── SimplifyMethodStrategy.cs
 │       └── SplitGodClassStrategy.cs
+├── Reporting/                         # Multi-format reporting
+│   ├── AzureDevOpsReporter.cs
+│   ├── GithubAnnotationReporter.cs
+│   ├── HtmlReporter.cs
+│   ├── JUnitReporter.cs
+│   └── SarifReporter.cs
+├── Rules/                             # Rule engine
+├── Server/                            # Language Server (LSP)
+│   ├── CodeActionProvider.cs
+│   ├── CodeLensProvider.cs
+│   ├── DiagnosticsProvider.cs
+│   ├── HoverProvider.cs
+│   └── LanguageServer.cs
 ├── Services/
 │   ├── AnalysisService.cs
 │   ├── AnalysisResult.cs
@@ -382,6 +778,11 @@ BaseScanner/
 │       ├── LinqTransformer.cs
 │       ├── ModernCSharpTransformer.cs
 │       └── StringTransformer.cs
+├── Tui/                               # Terminal UI
+│   ├── DiffPreviewView.cs
+│   ├── FilterPanel.cs
+│   ├── InteractiveMode.cs
+│   └── IssueDetailView.cs
 ├── VirtualWorkspace/
 │   ├── VirtualWorkspaceManager.cs
 │   ├── SolutionBranchManager.cs
@@ -389,7 +790,7 @@ BaseScanner/
 │   ├── DiffEngine.cs
 │   └── Models.cs
 ├── Tools/
-│   ├── AnalyzerTools.cs
+│   ├── AnalyzerTools.cs              # 40+ MCP tools
 │   └── RefactoringTools.cs
 └── Program.cs
 ```

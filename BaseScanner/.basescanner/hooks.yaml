@@ -1,0 +1,20 @@
+# BaseScanner Git Hooks Configuration
+# See documentation for more options
+
+pre-commit:
+  enabled: true
+  analyses: [security, perf]
+  fail-on: critical
+  incremental: true
+  quick: true
+  timeout: 60
+  exclude: ["*.Designer.cs", "*.Generated.cs", "**/obj/**", "**/bin/**"]
+
+pre-push:
+  enabled: true
+  analyses: all
+  fail-on: critical,high
+  incremental: true
+  quick: false
+  timeout: 300
+  exclude: ["*.Designer.cs", "*.Generated.cs", "**/obj/**", "**/bin/**"]

@@ -1485,9 +1485,20 @@ public class AnalysisService
         var dead = new List<UsageItem>();
         var lowUsage = new List<UsageItem>();
 
-        Console.WriteLine("  Collecting symbols from all projects...");
+        Console.WriteLine("  Collecting symbols from solution source code...");
         
-        // Collect all symbols we want to analyze (public/internal types and members)
+        // Get all source file paths in the solution
+        var solutionSourceFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var project in solution.Projects)
+        {
+            foreach (var doc in project.Documents)
+            {
+                if (doc.FilePath != null)
+                    solutionSourceFiles.Add(doc.FilePath);
+            }
+        }
+        
+        // Collect only symbols declared in solution source files
         var symbolsToAnalyze = new List<ISymbol>();
         
         foreach (var project in solution.Projects)
@@ -1496,41 +1507,61 @@ public class AnalysisService
             if (comp == null) continue;
 
             // Get all named types in this compilation
-            var visitor = new SymbolCollector();
+            var visitor = new SymbolCollector(solutionSourceFiles);
             visitor.Visit(comp.Assembly.GlobalNamespace);
             symbolsToAnalyze.AddRange(visitor.Symbols);
         }
 
-        Console.WriteLine($"  Analyzing {symbolsToAnalyze.Count} symbols for references...");
+        Console.WriteLine($"  Found {symbolsToAnalyze.Count} symbols in solution source code");
+        Console.WriteLine($"  Analyzing references across all projects...");
 
         // Use SymbolFinder to find references for each symbol across the entire solution
         var referenceCount = new ConcurrentDictionary<ISymbol, int>(SymbolEqualityComparer.Default);
         
-        var tasks = symbolsToAnalyze.Select(async symbol =>
+        // Process in parallel batches with progress reporting
+        var batchSize = 500; // Larger batches for better performance
+        var batches = symbolsToAnalyze.Chunk(batchSize).ToList();
+        
+        var processed = 0;
+        var totalSymbols = symbolsToAnalyze.Count;
+        
+        var parallelOptions = new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount };
+        
+        for (int i = 0; i < batches.Count; i++)
         {
-            try
+            var batchSymbols = batches[i].ToList();
+            
+            await Parallel.ForEachAsync(batchSymbols, parallelOptions, async (symbol, ct) =>
             {
-                // Use SymbolFinder.FindReferencesAsync for accurate cross-project reference counting
-                var references = await SymbolFinder.FindReferencesAsync(symbol, solution);
-                var count = references.SelectMany(r => r.Locations).Count();
-                
-                // Subtract 1 for the definition itself (if it's counted)
-                if (count > 0 && references.Any(r => r.Definition?.Equals(symbol, SymbolEqualityComparer.Default) == true))
+                try
                 {
-                    count = Math.Max(0, count - 1);
+                    // Use SymbolFinder.FindReferencesAsync for accurate cross-project reference counting
+                    var references = await SymbolFinder.FindReferencesAsync(symbol, solution, ct);
+                    
+                    // Count only references in solution source files (exclude generated/external)
+                    var count = references
+                        .SelectMany(r => r.Locations)
+                        .Count(loc => loc.Location.IsInSource && 
+                                     loc.Document?.FilePath != null &&
+                                     solutionSourceFiles.Contains(loc.Document.FilePath));
+                    
+                    referenceCount[symbol] = count;
+                }
+                catch
+                {
+                    // Symbol finder can fail for some symbols, skip them
+                    referenceCount[symbol] = -1; // Mark as unknown
                 }
                 
-                referenceCount[symbol] = count;
-            }
-            catch
-            {
-                // Symbol finder can fail for some symbols, skip them
-                referenceCount[symbol] = -1; // Mark as unknown
-            }
-        });
+                var current = Interlocked.Increment(ref processed);
+                if (current % 500 == 0)
+                {
+                    Console.WriteLine($"  Progress: {current}/{totalSymbols} symbols ({(current * 100.0 / totalSymbols):F1}%)");
+                }
+            });
+        }
 
-        await Task.WhenAll(tasks);
-
+        Console.WriteLine($"  Completed! Analyzed {referenceCount.Count} symbols");
         Console.WriteLine($"  Classifying symbols by usage...");
 
         // Classify symbols as dead or low usage
@@ -1627,10 +1658,18 @@ public class AnalysisService
 
     /// <summary>
     /// Visitor class to collect all symbols from a namespace recursively.
+    /// Only collects symbols declared in solution source files.
     /// </summary>
     private class SymbolCollector : SymbolVisitor
     {
+        private readonly HashSet<string> _solutionSourceFiles;
+        
         public List<ISymbol> Symbols { get; } = new List<ISymbol>();
+
+        public SymbolCollector(HashSet<string> solutionSourceFiles)
+        {
+            _solutionSourceFiles = solutionSourceFiles;
+        }
 
         public override void VisitNamespace(INamespaceSymbol symbol)
         {
@@ -1653,6 +1692,13 @@ public class AnalysisService
             if (symbol.IsImplicitlyDeclared) return;
             if (symbol.Name.Contains("<")) return; // Anonymous types
             
+            // Only include symbols declared in solution source files
+            var location = symbol.Locations.FirstOrDefault();
+            if (location == null || !location.IsInSource) return;
+            
+            var filePath = location.SourceTree?.FilePath;
+            if (filePath == null || !_solutionSourceFiles.Contains(filePath)) return;
+            
             // Add the type itself if it's public or internal
             if (symbol.DeclaredAccessibility == Accessibility.Public || 
                 symbol.DeclaredAccessibility == Accessibility.Internal)
@@ -1665,6 +1711,13 @@ public class AnalysisService
             {
                 if (member.IsImplicitlyDeclared) continue;
                 if (member.Name.Contains("<")) continue; // Compiler-generated
+                
+                // Check if member is in solution source
+                var memberLoc = member.Locations.FirstOrDefault();
+                if (memberLoc == null || !memberLoc.IsInSource) continue;
+                
+                var memberPath = memberLoc.SourceTree?.FilePath;
+                if (memberPath == null || !_solutionSourceFiles.Contains(memberPath)) continue;
 
                 if (member.DeclaredAccessibility == Accessibility.Public || 
                     member.DeclaredAccessibility == Accessibility.Internal ||
